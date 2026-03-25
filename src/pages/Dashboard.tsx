@@ -22,10 +22,15 @@ function PredictivePulse() {
   const statusColor = health?.status === 'HEALTHY' ? '#00c851' : health?.status === 'WARNING' ? '#ffa502' : '#ff4757';
   const statusEmoji = health?.status === 'HEALTHY' ? '🟢' : health?.status === 'WARNING' ? '🟡' : '🔴';
 
+  // Derive confidence from health data
+  const confidence = health?.models_active ? Math.min(100, Math.round((health.models_active / (health.models_total || 4)) * 100)) : null;
+  const regimeLabel = health?.regime || null;
+  const regimeColor = regimeLabel === 'RISK_ON' ? '#10b981' : regimeLabel === 'RISK_OFF' ? '#ef4444' : regimeLabel === 'CRISIS' ? '#ff4757' : '#f59e0b';
+
   return (
     <Link to="/predict" style={{ textDecoration: 'none', color: 'inherit' }}>
       <div className="glass-panel" style={{
-        padding: '1.25rem', cursor: 'pointer',
+        padding: '1rem', cursor: 'pointer',
         transition: 'all 0.2s ease',
         background: 'linear-gradient(135deg, rgba(102,126,234,0.04) 0%, rgba(118,75,162,0.04) 100%)',
         borderLeft: '3px solid #667eea',
@@ -33,42 +38,74 @@ function PredictivePulse() {
       onMouseEnter={e => (e.currentTarget.style.background = 'linear-gradient(135deg, rgba(102,126,234,0.08) 0%, rgba(118,75,162,0.08) 100%)')}
       onMouseLeave={e => (e.currentTarget.style.background = 'linear-gradient(135deg, rgba(102,126,234,0.04) 0%, rgba(118,75,162,0.04) 100%)')}
       >
-        <h4 style={{ margin: '0 0 0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1rem' }}>
-          <Brain size={18} color="#a78bfa" />
+        <h4 style={{ margin: '0 0 0.6rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+          <Brain size={16} color="#a78bfa" />
           Predictive Intelligence
           <ChevronRight size={14} color="var(--text-tertiary)" style={{ marginLeft: 'auto' }} />
         </h4>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
           {/* System Health */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>System</span>
-            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: statusColor }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>System</span>
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: statusColor }}>
               {health ? `${statusEmoji} ${health.status}` : '...'}
             </span>
           </div>
 
+          {/* Regime */}
+          {regimeLabel && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Regime</span>
+              <span style={{
+                fontSize: '0.65rem', fontWeight: 700, padding: '0.1rem 0.4rem', borderRadius: '4px',
+                background: `${regimeColor}18`, color: regimeColor, letterSpacing: '0.03em',
+              }}>
+                {regimeLabel.replace('_', ' ')}
+              </span>
+            </div>
+          )}
+
           {/* Events */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Events (30d)</span>
-            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Events (30d)</span>
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>
               {events?.last_30_days ?? '—'}
             </span>
           </div>
 
           {/* Critical count */}
-          {events?.by_severity?.CRITICAL > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Kritiska</span>
-              <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#ff4757' }}>
-                🔴 {events.by_severity.CRITICAL}
-              </span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Kritiska</span>
+            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: events?.by_severity?.CRITICAL > 0 ? '#ff4757' : '#10b981' }}>
+              {events?.by_severity?.CRITICAL > 0 ? `🔴 ${events.by_severity.CRITICAL}` : '✅ 0'}
+            </span>
+          </div>
+
+          {/* Modeller */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>AI Modeller</span>
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+              {health?.models_active ?? 4} / {health?.models_total ?? 4} aktiva
+            </span>
+          </div>
+
+          {/* Confidence bar */}
+          {confidence !== null && (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
+                <span style={{ fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>Modell-konfidens</span>
+                <span style={{ fontSize: '0.68rem', color: '#a78bfa', fontWeight: 600 }}>{confidence}%</span>
+              </div>
+              <div style={{ height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.06)' }}>
+                <div style={{ height: '100%', borderRadius: '2px', width: `${confidence}%`, background: 'linear-gradient(90deg, #667eea, #a78bfa)', transition: 'width 0.5s' }} />
+              </div>
             </div>
           )}
 
           {/* CTA */}
           <div style={{
-            marginTop: '0.25rem', fontSize: '0.7rem', color: '#667eea',
+            marginTop: '0.15rem', fontSize: '0.68rem', color: '#667eea',
             display: 'flex', alignItems: 'center', gap: '0.3rem',
           }}>
             Öppna prediktiv analys →
