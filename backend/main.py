@@ -1609,6 +1609,27 @@ async def get_costs():
     return cost_tracker.get_summary()
 
 
+class TaxComparisonRequest(BaseModel):
+    holdings: list
+    total_isk_value: float = 0
+
+
+class CurrencyHedgeRequest(BaseModel):
+    portfolio_weights: dict
+
+
+@app.post("/api/tax-comparison")
+async def compare_tax(request: TaxComparisonRequest):
+    """Jämför ISK vs Depå skatteoptimering per tillgång"""
+    return tax_opt.analyze_portfolio(request.holdings, request.total_isk_value)
+
+
+@app.post("/api/currency-hedge")
+async def analyze_currency(request: CurrencyHedgeRequest):
+    """Valutaexponering och hedge-rekommendationer"""
+    return currency_calc.analyze_exposure(request.portfolio_weights)
+
+
 # ============================================================
 # Del 4: Predictive Intelligence Endpoints
 # ============================================================

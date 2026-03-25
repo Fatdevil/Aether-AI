@@ -281,6 +281,50 @@ class AetherAPI {
     const response = await fetch(`${this.baseUrl}/api/predictive/convexity-optimize`, { method: 'POST' });
     return response.json();
   }
+
+  async getConvexPositions(): Promise<any> {
+    return this.fetch('/api/predictive/event-tree/convex-positions');
+  }
+
+  // -- Del 3: Operational Tools --
+  async getTaxComparison(holdings: any[], totalIskValue: number = 0): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/api/tax-comparison`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ holdings, total_isk_value: totalIskValue }),
+    });
+    return response.json();
+  }
+
+  async getCurrencyHedge(weights: Record<string, number>): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/api/currency-hedge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ portfolio_weights: weights }),
+    });
+    return response.json();
+  }
+
+  async shouldRebalance(current: Record<string, number>, target: Record<string, number>, regimeChanged: boolean = false, portfolioValue: number = 0): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/api/should-rebalance`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_weights: current, target_weights: target, regime_changed: regimeChanged, portfolio_value: portfolioValue }),
+    });
+    return response.json();
+  }
+
+  async getDrawdownRecovery(drawdownPct: number, annualReturn: number = 0.08, volatility: number = 0.12): Promise<any> {
+    return this.fetch(`/api/drawdown-recovery?drawdown_pct=${drawdownPct}&annual_return=${annualReturn}&volatility=${volatility}`);
+  }
+
+  async getCostSummary(): Promise<any> {
+    return this.fetch('/api/cost-summary');
+  }
+
+  async getNarratives(): Promise<any> {
+    return this.fetch('/api/predictive/narratives');
+  }
 }
 
 // Intelligence types

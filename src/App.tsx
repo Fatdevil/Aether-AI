@@ -12,6 +12,7 @@ import RegionsPage from './pages/RegionsPage';
 import PerformancePage from './pages/PerformancePage';
 import BacktestPage from './pages/BacktestPage';
 import PredictivePage from './pages/PredictivePage';
+import ToolsPage from './pages/ToolsPage';
 
 import GlobalOverviewPage from './pages/GlobalOverviewPage';
 import './index.css';
@@ -41,6 +42,7 @@ function AppContent() {
         <Route path="/performance" element={<PerformancePage />} />
         <Route path="/backtest" element={<BacktestPage />} />
         <Route path="/predict" element={<PredictivePage />} />
+        <Route path="/tools" element={<ToolsPage />} />
         <Route path="/global" element={<GlobalOverviewPage />} />
       </Routes>
       <MobileNav />

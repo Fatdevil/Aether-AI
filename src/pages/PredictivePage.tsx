@@ -1032,6 +1032,187 @@ function CalibrationPlot() {
 }
 
 
+// ---- NARRATIVE TIMELINE ----
+function NarrativeTimeline() {
+  const [data, setData] = useState<any>(null);
+
+  useEffect(() => {
+    api.getNarratives().then(setData).catch(() => {});
+  }, []);
+
+  if (!data) {
+    return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>Laddar narrativ...</div>;
+  }
+
+  const narratives = data.narratives || [];
+  if (narratives.length === 0) {
+    return (
+      <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
+        📰 Inga aktiva narrativ. Kör pipeline för att upptäcka marknadstrender.
+      </div>
+    );
+  }
+
+  const phaseColors: Record<string, string> = {
+    EMERGENCE: '#a78bfa', ACCELERATION: '#10b981', CONSENSUS: '#f59e0b',
+    EXTREME_CONSENSUS: '#ef4444', REVERSAL: '#ff0000',
+  };
+
+  // risk_level is an object: {level: "HÖG", message: "..."}
+  const riskLevel = typeof data.risk_level === 'object' ? data.risk_level?.level : data.risk_level;
+  const riskColor = riskLevel === 'HÖG' ? '#ef4444' : riskLevel === 'FÖRHÖJD' ? '#ffa502' : '#10b981';
+
+  return (
+    <div>
+      <div style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', marginBottom: '0.75rem' }}>
+        Riskbedömning: <strong style={{ color: riskColor }}>{riskLevel || 'NORMAL'}</strong> • {data.active_narratives || 0} aktiva narrativ
+      </div>
+
+      {/* Timeline */}
+      <div style={{ position: 'relative', paddingLeft: '20px' }}>
+        <div style={{
+          position: 'absolute', left: '8px', top: 0, bottom: 0, width: '2px',
+          background: 'linear-gradient(180deg, #a78bfa, #667eea, #10b981)',
+          borderRadius: '2px',
+        }} />
+
+        {narratives.slice(0, 6).map((n: any, i: number) => {
+          const phase = n.phase || 'EMERGENCE';
+          const color = phaseColors[phase] || '#667eea';
+          return (
+            <div key={i} style={{ position: 'relative', marginBottom: '0.75rem', paddingLeft: '1.25rem' }}>
+              <div style={{
+                position: 'absolute', left: '-4px', top: '6px', width: '10px', height: '10px',
+                borderRadius: '50%', background: color, border: '2px solid var(--bg-primary)',
+              }} />
+
+              <div style={{
+                padding: '0.5rem 0.75rem', borderRadius: '6px',
+                background: `${color}08`, borderLeft: `2px solid ${color}`,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {n.phase_icon || '📊'} {n.title || `Narrativ ${i + 1}`}
+                  </span>
+                  <span style={{
+                    fontSize: '0.6rem', padding: '0.1rem 0.4rem', borderRadius: '4px',
+                    background: `${color}20`, color, fontWeight: 700,
+                  }}>{phase}</span>
+                  <span style={{ fontSize: '0.6rem', color: 'var(--text-tertiary)' }}>
+                    {n.consensus_pct?.toFixed(0)}% konsensus
+                  </span>
+                  {n.direction && (
+                    <span style={{
+                      fontSize: '0.55rem', padding: '0.1rem 0.3rem', borderRadius: '3px',
+                      background: n.direction === 'BULLISH' ? 'rgba(16,185,129,0.1)' : n.direction === 'BEARISH' ? 'rgba(239,68,68,0.1)' : 'rgba(255,255,255,0.04)',
+                      color: n.direction === 'BULLISH' ? '#10b981' : n.direction === 'BEARISH' ? '#ef4444' : 'var(--text-tertiary)',
+                    }}>{n.direction}</span>
+                  )}
+                </div>
+                {n.assets?.length > 0 && (
+                  <div style={{ display: 'flex', gap: '0.2rem', flexWrap: 'wrap' }}>
+                    {n.assets.map((a: string, j: number) => (
+                      <span key={j} style={{
+                        fontSize: '0.6rem', padding: '0.08rem 0.3rem', borderRadius: '3px',
+                        background: 'rgba(255,255,255,0.04)', color: 'var(--text-tertiary)',
+                      }}>{a}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Signals */}
+      {data.signals?.length > 0 && (
+        <div style={{ marginTop: '0.75rem' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.4rem', color: 'var(--text-secondary)' }}>
+            📡 Handlingssignaler
+          </div>
+          <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
+            {data.signals.slice(0, 5).map((s: any, i: number) => (
+              <span key={i} style={{
+                padding: '0.2rem 0.5rem', borderRadius: '5px', fontSize: '0.65rem',
+                background: s.direction === 'BULLISH' ? 'rgba(16,185,129,0.08)' : s.direction === 'BEARISH' ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.04)',
+                color: s.direction === 'BULLISH' ? '#10b981' : s.direction === 'BEARISH' ? '#ef4444' : 'var(--text-tertiary)',
+                fontWeight: 600,
+              }}>
+                {s.narrative}: {s.action}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ---- CONVEXITY POSITIONS ----
+function ConvexitySection() {
+  const [positions, setPositions] = useState<any[]>([]);
+
+  useEffect(() => {
+    api.getConvexPositions().then(data => {
+      setPositions(Array.isArray(data) ? data : []);
+    }).catch(() => {});
+  }, []);
+
+  if (positions.length === 0) {
+    return (
+      <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
+        🎯 Inga konvexa positioner hittade. Kör pipeline och bygg event trees för att identifiera positioner som tjänar i alla scenarier.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', marginBottom: '0.25rem' }}>
+        Positioner som tjänar i de flesta scenarier (konvexitet):
+      </div>
+      {positions.slice(0, 6).map((p: any, i: number) => {
+        const score = p.convexity_score || p.avg_impact || 0;
+        const barWidth = Math.min(Math.abs(score) * 20, 100);
+        return (
+          <div key={i} style={{
+            display: 'flex', alignItems: 'center', gap: '0.5rem',
+            padding: '0.5rem 0.75rem', borderRadius: '6px',
+            background: 'rgba(16,185,129,0.04)', borderLeft: '3px solid #10b981',
+          }}>
+            <span style={{ width: '80px', fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+              {p.asset || `Position ${i + 1}`}
+            </span>
+            <span style={{
+              fontSize: '0.65rem', padding: '0.1rem 0.4rem', borderRadius: '4px',
+              background: 'rgba(16,185,129,0.12)', color: '#10b981', fontWeight: 700,
+            }}>
+              {p.action || 'ÖKA'}
+            </span>
+            <div style={{ flex: 1, height: '6px', background: 'rgba(255,255,255,0.04)', borderRadius: '3px' }}>
+              <div style={{
+                width: `${barWidth}%`, height: '100%', borderRadius: '3px',
+                background: 'linear-gradient(90deg, #10b981, #a78bfa)',
+              }} />
+            </div>
+            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#10b981' }}>
+              {score > 0 ? '+' : ''}{typeof score === 'number' ? score.toFixed(1) : score}
+            </span>
+            {p.scenarios_positive && (
+              <span style={{ fontSize: '0.6rem', color: 'var(--text-tertiary)' }}>
+                {p.scenarios_positive}/{p.scenarios_total} scenarier
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
 // ============================================================
 // MAIN PAGE
 // ============================================================
@@ -1108,7 +1289,28 @@ export default function PredictivePage() {
           <AdversarialSection />
         </CollapsibleSection>
 
-        {/* Row 5: Causal Flow + Lead-Lag Network */}
+        {/* Row 5: Narrative + Convexity */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <CollapsibleSection
+            title="Marknadnarrativ"
+            icon={<Eye size={18} color="#a78bfa" />}
+            badge="Livscykel"
+            badgeColor="#a78bfa"
+          >
+            <NarrativeTimeline />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            title="Konvexa Positioner"
+            icon={<TrendingUp size={18} color="#10b981" />}
+            badge="Alla scenarier"
+            badgeColor="#10b981"
+          >
+            <ConvexitySection />
+          </CollapsibleSection>
+        </div>
+
+        {/* Row 6: Causal Flow + Lead-Lag Network */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
           <CollapsibleSection
             title="Kausala Kedjor"
@@ -1129,7 +1331,7 @@ export default function PredictivePage() {
           </CollapsibleSection>
         </div>
 
-        {/* Row 6: Calibration + Meta */}
+        {/* Row 7: Calibration + Meta */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
           <CollapsibleSection
             title="Konfidenskalibrering"
@@ -1152,3 +1354,4 @@ export default function PredictivePage() {
     </main>
   );
 }
+
