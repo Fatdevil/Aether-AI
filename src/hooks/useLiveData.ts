@@ -62,6 +62,19 @@ export interface LiveData {
   refresh: () => Promise<void>;
 }
 
+// Preferred dashboard order: Aktier → Krypto → Råvaror → Makro
+const ASSET_ORDER: string[] = [
+  'global-equity', 'sp500', 'btc', 'gold', 'oil', 'silver', 'us10y', 'eurusd',
+];
+
+function sortAssets(assets: Asset[]): Asset[] {
+  return [...assets].sort((a, b) => {
+    const ai = ASSET_ORDER.indexOf(a.id);
+    const bi = ASSET_ORDER.indexOf(b.id);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+}
+
 export function useLiveData(): LiveData {
   const [assets, setAssets] = useState<Asset[]>(mockAssets);
   const [news, setNews] = useState<NewsItem[]>(mockNews);
@@ -95,8 +108,8 @@ export function useLiveData(): LiveData {
         api.getRegions(),
       ]);
 
-      // Convert API assets to frontend Asset type
-      const convertedAssets = apiAssets.map(apiAssetToAsset);
+      // Convert API assets to frontend Asset type, then sort
+      const convertedAssets = sortAssets(apiAssets.map(apiAssetToAsset));
       setAssets(convertedAssets);
 
       // News - pass through all fields including impact data

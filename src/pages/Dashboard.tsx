@@ -141,7 +141,7 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
             <BarChart3 size={20} color="var(--accent-blue)" /> Överblick ({assets.length})
           </h3>
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
             {assets.map((asset) => (
               <AssetCard
                 key={asset.id}
