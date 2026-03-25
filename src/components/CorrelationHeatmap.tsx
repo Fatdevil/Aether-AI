@@ -282,31 +282,62 @@ export default function CorrelationHeatmap() {
         </div>
       )}
 
-      {/* AI Insights Panel — Collapsible */}
+      {/* AI Insights Panel — Prominent Toggle */}
       {(insights.length > 0 || insightsLoading) && (
-        <div style={{ marginTop: '0.75rem' }}>
+        <div style={{ marginTop: '1rem' }}>
           <button
             onClick={() => {
               const el = document.getElementById('corr-insights');
-              if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+              const arrow = document.getElementById('corr-insights-arrow');
+              if (el && arrow) {
+                const isHidden = el.style.display === 'none';
+                el.style.display = isHidden ? 'block' : 'none';
+                arrow.textContent = isHidden ? '▴' : '▾';
+              }
             }}
             style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: '0.78rem', color: '#a78bfa', fontWeight: 600,
-              padding: '0.3rem 0', display: 'flex', alignItems: 'center', gap: '0.3rem',
+              width: '100%', cursor: 'pointer',
+              padding: '0.7rem 1rem', borderRadius: '10px',
+              background: 'linear-gradient(135deg, rgba(139,92,246,0.08) 0%, rgba(102,126,234,0.08) 100%)',
+              border: '1px solid rgba(139,92,246,0.2)',
+              display: 'flex', alignItems: 'center', gap: '0.6rem',
+              transition: 'all 0.2s ease',
+              boxShadow: '0 0 15px rgba(139,92,246,0.08)',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139,92,246,0.14) 0%, rgba(102,126,234,0.14) 100%)';
+              e.currentTarget.style.borderColor = 'rgba(139,92,246,0.35)';
+              e.currentTarget.style.boxShadow = '0 0 25px rgba(139,92,246,0.15)';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = 'linear-gradient(135deg, rgba(139,92,246,0.08) 0%, rgba(102,126,234,0.08) 100%)';
+              e.currentTarget.style.borderColor = 'rgba(139,92,246,0.2)';
+              e.currentTarget.style.boxShadow = '0 0 15px rgba(139,92,246,0.08)';
             }}
           >
-            🧠 AI-analys
-            <span style={{
-              fontSize: '0.6rem', padding: '0.1rem 0.35rem', borderRadius: '4px',
-              background: insightsSource === 'ai' ? 'rgba(139,92,246,0.2)' : 'rgba(255,255,255,0.06)',
-              color: insightsSource === 'ai' ? '#a78bfa' : 'var(--text-tertiary)',
-            }}>
-              {insightsSource === 'ai' ? 'Gemini' : 'rule-based'}
-            </span>
-            <span style={{ fontSize: '0.65rem', color: 'var(--text-tertiary)', marginLeft: '0.3rem' }}>
-              {insights.length} insikter — klicka för att visa ▾
-            </span>
+            <span style={{ fontSize: '1.3rem', filter: 'drop-shadow(0 0 6px rgba(139,92,246,0.5))' }}>🧠</span>
+            <div style={{ flex: 1, textAlign: 'left' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.15rem' }}>
+                <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#c4b5fd' }}>
+                  AI-Driven Korrelationsanalys
+                </span>
+                <span style={{
+                  fontSize: '0.6rem', padding: '0.12rem 0.45rem', borderRadius: '6px', fontWeight: 700,
+                  background: insightsSource === 'ai' ? 'rgba(139,92,246,0.25)' : 'rgba(255,255,255,0.06)',
+                  color: insightsSource === 'ai' ? '#a78bfa' : 'var(--text-tertiary)',
+                  letterSpacing: '0.03em',
+                }}>
+                  {insightsSource === 'ai' ? '✦ Gemini' : 'rule-based'}
+                </span>
+              </div>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                {insights.length} AI-genererade insikter om portföljrisker och diversifiering
+              </span>
+            </div>
+            <span id="corr-insights-arrow" style={{
+              fontSize: '1rem', color: '#a78bfa', fontWeight: 700,
+              transition: 'transform 0.2s',
+            }}>▾</span>
           </button>
           <div id="corr-insights" style={{ display: 'none', marginTop: '0.5rem' }}>
             <div style={{
