@@ -1772,6 +1772,83 @@ async def predictive_summary():
 
 
 # ============================================================
+# Visualization Endpoints (för P3 flödesdiagram/nätverksgraf)
+# ============================================================
+
+@app.get("/api/predictive/causal-chain/active")
+async def get_active_chains_full():
+    """Alla aktiva kausala kedjor med fullständig länkdata för flödesdiagram."""
+    from dataclasses import asdict
+    chains = [c for c in causal_engine.active_chains if c.status == "ACTIVE"]
+    result = []
+    for chain in chains:
+        chain_dict = asdict(chain)
+        # Ensure links have proper structure for visualization
+        links = chain_dict.get("links", [])
+        result.append({
+            "id": chain_dict.get("id", ""),
+            "trigger_event": chain_dict.get("trigger_event", ""),
+            "status": chain_dict.get("status", ""),
+            "created_at": chain_dict.get("created_at", ""),
+            "probability": chain_dict.get("current_probability", 0),
+            "links": [{
+                "cause": l.get("cause", ""),
+                "effect": l.get("effect", ""),
+                "probability": l.get("probability", 0),
+                "delay": l.get("delay_estimate", ""),
+                "mechanism": l.get("mechanism", ""),
+                "status": l.get("status", "PENDING"),
+            } for l in links],
+            "portfolio_impact": chain_dict.get("portfolio_impact", {}),
+        })
+    return {"chains": result, "total": len(result)}
+
+
+@app.get("/api/predictive/lead-lag/network")
+async def get_lead_lag_network():
+    """Lead-lag relationer som nätverksdata (noder + kanter) för graf-visualisering."""
+    returns = data_service.get_historical_returns()
+    if returns.empty:
+        return {"nodes": [], "edges": []}
+
+    signals = lead_lag_detector.get_actionable_signals(returns)
+    # Also get all correlations for the network
+    all_assets = list(returns.columns)
+    nodes = [{"id": a, "group": "crypto" if a in ["BITCOIN", "ETHEREUM"] else "equity" if a in ["SP500", "NASDAQ", "DAX", "EMERGING_MARKETS"] else "commodity"} for a in all_assets]
+    edges = []
+    for s in signals:
+        if isinstance(s, dict):
+            edges.append({
+                "source": s.get("leader", ""),
+                "target": s.get("follower", ""),
+                "lag_days": s.get("lag_days", 0),
+                "correlation": s.get("correlation", 0),
+                "direction": s.get("direction", "positive"),
+                "signal": s.get("signal", ""),
+            })
+    return {"nodes": nodes, "edges": edges}
+
+
+@app.get("/api/predictive/pipeline-history")
+async def get_pipeline_history():
+    """Historik för pipeline-körningar (för tidsserie-graf)."""
+    return {
+        "runs": _pipeline_run_count,
+        "last_run": _last_pipeline_run.isoformat() if _last_pipeline_run else None,
+        "last_result": {
+            "status": _last_pipeline_result.get("status") if _last_pipeline_result else None,
+            "duration": _last_pipeline_result.get("duration_seconds") if _last_pipeline_result else None,
+            "events": _last_pipeline_result.get("detection", {}).get("auto_events", 0) if _last_pipeline_result else 0,
+            "chains": _last_pipeline_result.get("causal_chains", {}).get("active", 0) if _last_pipeline_result else 0,
+            "lead_lag": _last_pipeline_result.get("lead_lag", {}).get("actionable_signals", 0) if _last_pipeline_result else 0,
+            "recommendations": len(_last_pipeline_result.get("portfolio_recommendation", {}).get("recommendations", [])) if _last_pipeline_result else 0,
+        } if _last_pipeline_result else None,
+        "interval_hours": PIPELINE_INTERVAL_HOURS,
+        "event_detect_refreshes": _refresh_count,
+    }
+
+
+# ============================================================
 # Del 4B: Autonomous Predictive Pipeline
 # ============================================================
 

@@ -668,6 +668,368 @@ function AdversarialSection() {
     </div>
   );
 }
+// ---- CAUSAL FLOW DIAGRAM ----
+function CausalFlowDiagram() {
+  const [chains, setChains] = useState<any>(null);
+  const [selected, setSelected] = useState<number>(0);
+
+  useEffect(() => {
+    api.getCausalChainsActive().then(setChains).catch(() => {});
+  }, []);
+
+  if (!chains || !chains.chains?.length) {
+    return (
+      <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
+        {chains?.total === 0 ? '🔗 Inga aktiva kausala kedjor. Kör pipeline för att bygga kedjor.' : 'Laddar kedjor...'}
+      </div>
+    );
+  }
+
+  const chain = chains.chains[selected];
+  const links = chain?.links || [];
+  const nodeW = 160, nodeH = 50, gapX = 60;
+  const svgW = (links.length + 1) * (nodeW + gapX) + 40;
+  const svgH = 180;
+
+  // Build nodes: trigger + all effects
+  const nodes = [
+    { label: chain.trigger_event?.slice(0, 22) || 'Trigger', type: 'trigger', x: 20, y: 60 },
+    ...links.map((l: any, i: number) => ({
+      label: l.effect?.slice(0, 22) || `Effekt ${i + 1}`,
+      type: l.status === 'CONFIRMED' ? 'confirmed' : l.status === 'INVALIDATED' ? 'invalid' : 'pending',
+      x: 20 + (i + 1) * (nodeW + gapX),
+      y: 60,
+      prob: l.probability,
+      delay: l.delay,
+    })),
+  ];
+
+  const statusColors: Record<string, string> = {
+    trigger: '#a78bfa', confirmed: '#10b981', invalid: '#ef4444', pending: '#667eea',
+  };
+
+  return (
+    <div>
+      {/* Chain selector */}
+      {chains.chains.length > 1 && (
+        <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+          {chains.chains.map((c: any, i: number) => (
+            <button key={i} onClick={() => setSelected(i)} style={{
+              padding: '0.3rem 0.7rem', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 600,
+              background: i === selected ? 'rgba(102,126,234,0.2)' : 'rgba(255,255,255,0.03)',
+              border: `1px solid ${i === selected ? '#667eea' : 'rgba(255,255,255,0.06)'}`,
+              color: i === selected ? '#a78bfa' : 'var(--text-tertiary)', cursor: 'pointer',
+            }}>
+              {c.trigger_event?.slice(0, 30)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* SVG Flow Diagram */}
+      <div style={{ overflowX: 'auto', borderRadius: '8px', background: 'rgba(0,0,0,0.2)', padding: '0.5rem' }}>
+        <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`}>
+          <defs>
+            <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+              <polygon points="0 0, 10 3.5, 0 7" fill="#667eea" />
+            </marker>
+          </defs>
+
+          {/* Edges (arrows) */}
+          {nodes.slice(0, -1).map((node, i) => {
+            const next = nodes[i + 1];
+            const link = links[i];
+            return (
+              <g key={`edge-${i}`}>
+                <line
+                  x1={node.x + nodeW} y1={node.y + nodeH / 2}
+                  x2={next.x} y2={next.y + nodeH / 2}
+                  stroke="#667eea" strokeWidth={2} strokeDasharray={link?.status === 'PENDING' ? '5,5' : 'none'}
+                  markerEnd="url(#arrowhead)" opacity={0.7}
+                />
+                {link && (
+                  <text
+                    x={(node.x + nodeW + next.x) / 2} y={node.y + nodeH / 2 - 8}
+                    textAnchor="middle" fontSize="10" fill="#a78bfa" fontWeight="600"
+                  >
+                    {(link.probability * 100).toFixed(0)}% • {link.delay || '?'}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+
+          {/* Nodes */}
+          {nodes.map((node, i) => (
+            <g key={`node-${i}`}>
+              <rect
+                x={node.x} y={node.y} width={nodeW} height={nodeH} rx={8}
+                fill={`${statusColors[node.type]}12`}
+                stroke={statusColors[node.type]} strokeWidth={1.5}
+              />
+              <text
+                x={node.x + nodeW / 2} y={node.y + nodeH / 2 + 4}
+                textAnchor="middle" fontSize="11" fill={statusColors[node.type]} fontWeight="600"
+              >
+                {node.label}
+              </text>
+              {node.type === 'trigger' && (
+                <text x={node.x + nodeW / 2} y={node.y - 6} textAnchor="middle" fontSize="9" fill="#a78bfa">
+                  ⚡ TRIGGER
+                </text>
+              )}
+            </g>
+          ))}
+        </svg>
+      </div>
+
+      {/* Chain info bar */}
+      <div style={{
+        display: 'flex', gap: '1rem', marginTop: '0.75rem', fontSize: '0.72rem', color: 'var(--text-tertiary)',
+        flexWrap: 'wrap',
+      }}>
+        <span>Sannolikhet: <strong style={{ color: '#a78bfa' }}>{(chain.probability * 100).toFixed(0)}%</strong></span>
+        <span>Länkar: <strong>{links.length}</strong></span>
+        <span style={{ display: 'flex', gap: '0.3rem' }}>
+          {Object.entries(chain.portfolio_impact || {}).slice(0, 4).map(([asset, impact]: [string, any]) => (
+            <span key={asset} style={{
+              padding: '0.1rem 0.3rem', borderRadius: '3px', fontSize: '0.65rem',
+              background: impact > 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+              color: impact > 0 ? '#10b981' : '#ef4444',
+            }}>{asset}: {impact > 0 ? '+' : ''}{typeof impact === 'number' ? impact.toFixed(1) : impact}</span>
+          ))}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+
+// ---- LEAD-LAG NETWORK GRAPH ----
+function LeadLagNetwork() {
+  const [network, setNetwork] = useState<any>(null);
+
+  useEffect(() => {
+    api.getLeadLagNetwork().then(setNetwork).catch(() => {});
+  }, []);
+
+  if (!network || (!network.edges?.length && !network.nodes?.length)) {
+    return (
+      <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
+        {network?.nodes?.length === 0 ? '📊 Ingen historisk data för lead-lag-analys ännu.' : 'Laddar nätverksdata...'}
+      </div>
+    );
+  }
+
+  const nodes = network.nodes || [];
+  const edges = network.edges || [];
+  const svgW = 600, svgH = 350;
+  const centerX = svgW / 2, centerY = svgH / 2;
+  const radius = 140;
+
+  // Position nodes in a circle
+  const nodePositions = nodes.map((n: any, i: number) => {
+    const angle = (2 * Math.PI * i) / nodes.length - Math.PI / 2;
+    return {
+      ...n,
+      x: centerX + radius * Math.cos(angle),
+      y: centerY + radius * Math.sin(angle),
+    };
+  });
+
+  const groupColors: Record<string, string> = {
+    crypto: '#f7931a', equity: '#10b981', commodity: '#a78bfa',
+  };
+
+  const getNodePos = (id: string) => nodePositions.find((n: any) => n.id === id) || { x: centerX, y: centerY };
+
+  return (
+    <div style={{ borderRadius: '8px', background: 'rgba(0,0,0,0.2)', padding: '0.75rem' }}>
+      <svg width="100%" viewBox={`0 0 ${svgW} ${svgH}`}>
+        <defs>
+          <marker id="arrow-ll" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#667eea" opacity="0.6" />
+          </marker>
+        </defs>
+
+        {/* Edges */}
+        {edges.map((e: any, i: number) => {
+          const src = getNodePos(e.source);
+          const tgt = getNodePos(e.target);
+          const isPositive = e.direction === 'positive';
+          const dx = tgt.x - src.x, dy = tgt.y - src.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const nx = dx / dist, ny = dy / dist;
+          // Shorten arrows to not overlap nodes
+          const sx = src.x + nx * 30, sy = src.y + ny * 30;
+          const tx = tgt.x - nx * 30, ty = tgt.y - ny * 30;
+          const midX = (sx + tx) / 2, midY = (sy + ty) / 2;
+
+          return (
+            <g key={`edge-${i}`}>
+              <line
+                x1={sx} y1={sy} x2={tx} y2={ty}
+                stroke={isPositive ? '#10b981' : '#ef4444'}
+                strokeWidth={Math.max(1, Math.abs(e.correlation) * 3)}
+                opacity={0.5} markerEnd="url(#arrow-ll)"
+              />
+              <text x={midX} y={midY - 6} textAnchor="middle" fontSize="9" fill="var(--text-tertiary)">
+                {e.lag_days}d lag
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Nodes */}
+        {nodePositions.map((n: any, i: number) => {
+          const color = groupColors[n.group] || '#667eea';
+          const hasEdge = edges.some((e: any) => e.source === n.id || e.target === n.id);
+          return (
+            <g key={`node-${i}`}>
+              <circle
+                cx={n.x} cy={n.y} r={hasEdge ? 24 : 18}
+                fill={`${color}20`} stroke={color} strokeWidth={hasEdge ? 2 : 1}
+              />
+              <text x={n.x} y={n.y + 4} textAnchor="middle" fontSize="9" fill={color} fontWeight="700">
+                {n.id?.slice(0, 6)}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Legend */}
+        <g transform={`translate(10, ${svgH - 50})`}>
+          {Object.entries(groupColors).map(([group, color], i) => (
+            <g key={group} transform={`translate(${i * 90}, 0)`}>
+              <circle cx={8} cy={8} r={6} fill={`${color}40`} stroke={color} strokeWidth={1} />
+              <text x={18} y={12} fontSize="9" fill="var(--text-tertiary)">{group}</text>
+            </g>
+          ))}
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+
+// ---- CALIBRATION PLOT ----
+function CalibrationPlot() {
+  const [confidence, setConfidence] = useState<any>(null);
+
+  useEffect(() => {
+    api.getConfidence().then(setConfidence).catch(() => {});
+  }, []);
+
+  const svgW = 320, svgH = 320;
+  const pad = 45;
+  const chartW = svgW - 2 * pad, chartH = svgH - 2 * pad;
+
+  if (!confidence?.calibration_bins || Object.keys(confidence.calibration_bins).length === 0) {
+    return (
+      <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
+        <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🎯</div>
+        {confidence?.status === 'OTILLRÄCKLIG_DATA'
+          ? `Behöver ${confidence.min_needed}+ prediktioner (har ${confidence.records || 0}). Systemet loggar nu automatiskt.`
+          : 'Laddar kalibrering...'}
+        <div style={{ marginTop: '0.75rem', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+          Kalibreringsplotten visar hur väl systemets konfidensangivelser stämmer med verkligheten.
+          Perfekt kalibrering = alla punkter på 45°-linjen.
+        </div>
+      </div>
+    );
+  }
+
+  const bins = confidence.calibration_bins;
+  const points = Object.entries(bins).map(([key, val]: [string, any]) => ({
+    predicted: val.mean_predicted || parseFloat(key),
+    actual: val.mean_actual || 0,
+    count: val.count || 0,
+  }));
+
+  return (
+    <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      <div style={{ borderRadius: '8px', background: 'rgba(0,0,0,0.2)', padding: '0.5rem' }}>
+        <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`}>
+          {/* Axes */}
+          <line x1={pad} y1={pad} x2={pad} y2={pad + chartH} stroke="rgba(255,255,255,0.1)" />
+          <line x1={pad} y1={pad + chartH} x2={pad + chartW} y2={pad + chartH} stroke="rgba(255,255,255,0.1)" />
+
+          {/* Perfect calibration diagonal */}
+          <line x1={pad} y1={pad + chartH} x2={pad + chartW} y2={pad}
+            stroke="#667eea" strokeWidth={1} strokeDasharray="6,4" opacity={0.4} />
+
+          {/* Grid lines */}
+          {[0.2, 0.4, 0.6, 0.8].map(v => (
+            <g key={v}>
+              <line x1={pad} y1={pad + chartH * (1 - v)} x2={pad + chartW} y2={pad + chartH * (1 - v)}
+                stroke="rgba(255,255,255,0.03)" />
+              <text x={pad - 6} y={pad + chartH * (1 - v) + 3} textAnchor="end" fontSize="9" fill="var(--text-tertiary)">
+                {(v * 100).toFixed(0)}%
+              </text>
+              <text x={pad + chartW * v} y={pad + chartH + 15} textAnchor="middle" fontSize="9" fill="var(--text-tertiary)">
+                {(v * 100).toFixed(0)}%
+              </text>
+            </g>
+          ))}
+
+          {/* Axis labels */}
+          <text x={pad + chartW / 2} y={svgH - 3} textAnchor="middle" fontSize="10" fill="var(--text-tertiary)">
+            Predicerad sannolikhet
+          </text>
+          <text x={12} y={pad + chartH / 2} textAnchor="middle" fontSize="10" fill="var(--text-tertiary)"
+            transform={`rotate(-90, 12, ${pad + chartH / 2})`}>
+            Faktiskt utfall
+          </text>
+
+          {/* Data points */}
+          {points.map((p, i) => {
+            const cx = pad + p.predicted * chartW;
+            const cy = pad + chartH * (1 - p.actual);
+            const r = Math.max(4, Math.min(12, p.count * 2));
+            const isOver = p.predicted > p.actual + 0.05;
+            const isUnder = p.actual > p.predicted + 0.05;
+            const color = isOver ? '#ef4444' : isUnder ? '#10b981' : '#667eea';
+            return (
+              <g key={i}>
+                <circle cx={cx} cy={cy} r={r} fill={`${color}40`} stroke={color} strokeWidth={1.5} />
+                <text x={cx} y={cy - r - 3} textAnchor="middle" fontSize="8" fill={color}>
+                  n={p.count}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Legend */}
+          <text x={pad + chartW - 5} y={pad + 15} textAnchor="end" fontSize="8" fill="#667eea" opacity={0.5}>
+            Perfekt kalibrering ↗
+          </text>
+        </svg>
+      </div>
+
+      {/* Stats panel */}
+      <div style={{ flex: 1, minWidth: '150px' }}>
+        <div style={{ marginBottom: '0.75rem' }}>
+          <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>Brier Score</div>
+          <div style={{
+            fontSize: '1.5rem', fontWeight: 700,
+            color: confidence.brier_score < 0.15 ? '#10b981' : confidence.brier_score < 0.25 ? '#ffa502' : '#ef4444',
+          }}>{confidence.brier_score?.toFixed(3)}</div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>{confidence.brier_interpretation}</div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+          <MetricCard label="Prediktioner" value={confidence.total_predictions || 0} />
+          <MetricCard label="Överkonfident" value={confidence.overconfident_bins || 0} color="#ef4444" />
+          <MetricCard label="Underkonfident" value={confidence.underconfident_bins || 0} color="#10b981" />
+        </div>
+        {confidence.diagnosis && (
+          <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+            {confidence.diagnosis}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 
 // ============================================================
@@ -746,14 +1108,46 @@ export default function PredictivePage() {
           <AdversarialSection />
         </CollapsibleSection>
 
-        {/* Row 5: Meta + Confidence */}
-        <CollapsibleSection
-          title="Meta-learning & Kalibrering"
-          icon={<TrendingUp size={18} color="#a78bfa" />}
-          defaultOpen={false}
-        >
-          <MetaConfidenceSection />
-        </CollapsibleSection>
+        {/* Row 5: Causal Flow + Lead-Lag Network */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <CollapsibleSection
+            title="Kausala Kedjor"
+            icon={<Activity size={18} color="#667eea" />}
+            badge="Flödesdiagram"
+            badgeColor="#667eea"
+          >
+            <CausalFlowDiagram />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            title="Lead-Lag Nätverk"
+            icon={<TrendingUp size={18} color="#10b981" />}
+            badge="Nätverksgraf"
+            badgeColor="#10b981"
+          >
+            <LeadLagNetwork />
+          </CollapsibleSection>
+        </div>
+
+        {/* Row 6: Calibration + Meta */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <CollapsibleSection
+            title="Konfidenskalibrering"
+            icon={<Eye size={18} color="#a78bfa" />}
+            badge="Kalibreringsplot"
+            badgeColor="#a78bfa"
+          >
+            <CalibrationPlot />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            title="Meta-learning & Vikter"
+            icon={<TrendingUp size={18} color="#a78bfa" />}
+            defaultOpen={false}
+          >
+            <MetaConfidenceSection />
+          </CollapsibleSection>
+        </div>
       </div>
     </main>
   );

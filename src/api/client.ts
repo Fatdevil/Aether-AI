@@ -265,6 +265,18 @@ class AetherAPI {
     return this.fetch('/api/predictive/auto-status');
   }
 
+  async getCausalChainsActive(): Promise<any> {
+    return this.fetch('/api/predictive/causal-chain/active');
+  }
+
+  async getLeadLagNetwork(): Promise<any> {
+    return this.fetch('/api/predictive/lead-lag/network');
+  }
+
+  async getPipelineHistory(): Promise<any> {
+    return this.fetch('/api/predictive/pipeline-history');
+  }
+
   async convexityOptimize(): Promise<any> {
     const response = await fetch(`${this.baseUrl}/api/predictive/convexity-optimize`, { method: 'POST' });
     return response.json();
