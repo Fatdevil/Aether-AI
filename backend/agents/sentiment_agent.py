@@ -180,3 +180,89 @@ Bedöm det övergripande sentimentet kring denna tillgång och ge ditt JSON-svar
             "provider_used": "rule_based",
         }
 
+
+# ============================================================
+# SentimentPaceTracker: Sentiment velocity indicator
+# ============================================================
+
+from collections import deque
+from datetime import datetime, timedelta
+from typing import Dict, List
+
+
+class SentimentPaceTracker:
+    """
+    Mäter HASTIGHET av sentimentförändring.
+    50 negativa rubriker/dag → 5 = avspänningssignal INNAN priset rör sig.
+    """
+
+    def __init__(self, window_days: int = 7):
+        self.history: deque = deque(maxlen=window_days * 50)  # Max 50 artiklar/dag
+        self.window_days = window_days
+
+    def add_articles(self, articles: List[Dict]):
+        """
+        Lägg till artiklar: [{"timestamp": ..., "sentiment": -0.8, "title": "..."}]
+        """
+        for article in articles:
+            ts = article.get("timestamp")
+            if isinstance(ts, str):
+                try:
+                    ts = datetime.fromisoformat(ts)
+                except (ValueError, TypeError):
+                    ts = datetime.now()
+            elif not isinstance(ts, datetime):
+                ts = datetime.now()
+
+            self.history.append({
+                "timestamp": ts,
+                "sentiment": article.get("sentiment", 0),
+            })
+
+    def compute_pace(self) -> Dict:
+        """Beräkna sentiment-pace"""
+        if len(self.history) < 5:
+            return {"pace": "INSUFFICIENT_DATA", "score": 0, "message": "För få artiklar"}
+
+        now = datetime.now()
+        recent = [h for h in self.history if (now - h["timestamp"]).days <= 1]
+        older = [h for h in self.history if 1 < (now - h["timestamp"]).days <= 3]
+
+        if not recent or not older:
+            return {"pace": "STABLE", "score": 0, "message": "Stabilt nyhetsflöde"}
+
+        recent_avg = sum(h["sentiment"] for h in recent) / len(recent)
+        older_avg = sum(h["sentiment"] for h in older) / len(older)
+        recent_volume = len(recent)
+        older_volume = len(older) / 2  # Normalisera för 2 dagar
+
+        sentiment_change = recent_avg - older_avg
+        volume_change = (recent_volume - older_volume) / (older_volume + 1)
+
+        # Pace score: -10 (snabbt försämras) till +10 (snabbt förbättras)
+        pace_score = sentiment_change * 5 + volume_change * 2
+        pace_score = max(-10, min(10, pace_score))
+
+        if pace_score > 3:
+            pace = "IMPROVING"
+        elif pace_score > 1:
+            pace = "SLOWLY_IMPROVING"
+        elif pace_score > -1:
+            pace = "STABLE"
+        elif pace_score > -3:
+            pace = "SLOWLY_DETERIORATING"
+        else:
+            pace = "RAPIDLY_DETERIORATING"
+
+        return {
+            "pace": pace,
+            "score": round(pace_score, 2),
+            "recent_sentiment": round(recent_avg, 3),
+            "older_sentiment": round(older_avg, 3),
+            "volume_today": recent_volume,
+            "volume_avg": round(older_volume, 1),
+            "message": (
+                f"Sentiment {pace.lower()}: {recent_avg:.2f} vs {older_avg:.2f}, "
+                f"volym {recent_volume} artiklar"
+            )
+        }

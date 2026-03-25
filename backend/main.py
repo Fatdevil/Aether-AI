@@ -17,12 +17,21 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from data_service import DataService
 from ai_engine import get_system_info
+from risk_manager import PortfolioRiskManager
+from transaction_filter import filter_rebalancing
+from agent_performance import AgentPerformanceTracker
+from domain_knowledge import DomainKnowledgeManager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("aether")
 
 # Global data service
 data_service = DataService()
+
+# Global risk & regime managers
+risk_manager = PortfolioRiskManager()
+perf_tracker = AgentPerformanceTracker()
+domain_mgr = DomainKnowledgeManager()
 
 
 @asynccontextmanager
@@ -866,3 +875,284 @@ async def compare_portfolios_endpoint(request: Request):
         "comparison": comparison,
         "frontier": frontier,
     }
+
+
+# ============================================================
+# RegimeTransition: Gradual regime change with confirmation
+# ============================================================
+
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
+class RegimeTransition:
+    """Hanterar gradvis övergång mellan regimer"""
+    current_regime: str = "NEUTRAL"
+    target_regime: str = "NEUTRAL"
+    transition_start: Optional[datetime] = None
+    transition_days: int = 3           # 3-dagars bekräftelse
+    blend_steps: int = 3               # 3 steg för gradvis övergång
+    current_step: int = 0
+    confirmed: bool = True
+
+    def signal_new_regime(self, detected_regime: str) -> dict:
+        """Anropas varje dag med detekterad regim."""
+        if detected_regime == self.current_regime:
+            self.target_regime = self.current_regime
+            self.transition_start = None
+            self.current_step = 0
+            self.confirmed = True
+            return {
+                "action": "HOLD",
+                "regime": self.current_regime,
+                "blend": {self.current_regime: 1.0},
+                "message": f"Stabil {self.current_regime}-regim"
+            }
+
+        if detected_regime != self.target_regime:
+            self.target_regime = detected_regime
+            self.transition_start = datetime.now()
+            self.current_step = 0
+            self.confirmed = False
+            return {
+                "action": "WAIT",
+                "regime": self.current_regime,
+                "blend": {self.current_regime: 1.0},
+                "message": f"Ny signal: {detected_regime}. Väntar bekräftelse (dag 1/{self.transition_days})"
+            }
+
+        # Samma target som förut — räkna bekräftelsedagar
+        if self.transition_start:
+            days = (datetime.now() - self.transition_start).days
+
+            if days < self.transition_days and not self.confirmed:
+                return {
+                    "action": "WAIT",
+                    "regime": self.current_regime,
+                    "blend": {self.current_regime: 1.0},
+                    "message": f"Bekräftar {self.target_regime} (dag {days+1}/{self.transition_days})"
+                }
+
+            # Bekräftad! Starta gradvis övergång
+            self.confirmed = True
+            self.current_step += 1
+            blend_pct = min(self.current_step / self.blend_steps, 1.0)
+
+            if blend_pct >= 1.0:
+                self.current_regime = self.target_regime
+                self.current_step = 0
+                return {
+                    "action": "COMPLETE",
+                    "regime": self.current_regime,
+                    "blend": {self.current_regime: 1.0},
+                    "message": f"Regimövergång till {self.current_regime} klar"
+                }
+
+            return {
+                "action": "TRANSITION",
+                "regime": f"{self.current_regime}->{self.target_regime}",
+                "blend": {
+                    self.current_regime: round(1.0 - blend_pct, 2),
+                    self.target_regime: round(blend_pct, 2)
+                },
+                "message": f"Övergår till {self.target_regime}: steg {self.current_step}/{self.blend_steps} ({blend_pct*100:.0f}%)"
+            }
+
+        return {"action": "HOLD", "regime": self.current_regime, "blend": {self.current_regime: 1.0}}
+
+    def get_blended_weights(
+        self,
+        regime_weights: dict,
+        blend: dict
+    ) -> dict:
+        """Blanda vikter från två regimer baserat på blend-procent."""
+        result = {}
+        all_assets = set()
+        for weights in regime_weights.values():
+            all_assets.update(weights.keys())
+
+        for asset in all_assets:
+            blended = 0.0
+            for regime, pct in blend.items():
+                regime_w = regime_weights.get(regime, {})
+                blended += regime_w.get(asset, 0) * pct
+            result[asset] = round(blended, 2)
+
+        return result
+
+
+# Global regime transition manager
+regime_transition = RegimeTransition()
+
+
+# ============================================================
+# New API Endpoints
+# ============================================================
+
+from pydantic import BaseModel
+
+
+class PortfolioUpdate(BaseModel):
+    portfolio_value: float
+    profile: str = "balanced"
+
+
+class RebalanceRequest(BaseModel):
+    current_weights: dict
+    target_weights: dict
+    portfolio_value: float
+
+
+@app.post("/api/risk-check")
+async def check_risk(update: PortfolioUpdate):
+    """Kolla trailing stop och risk-status"""
+    result = risk_manager.update(update.portfolio_value, update.profile)
+    return result
+
+
+@app.post("/api/filter-trades")
+async def filter_trades_endpoint(request: RebalanceRequest):
+    """Filtrera trades baserat på courtage vs förväntad förbättring"""
+    trades = filter_rebalancing(
+        request.current_weights,
+        request.target_weights,
+        request.portfolio_value
+    )
+    approved = {k: v for k, v in trades.items() if v["should_trade"]}
+    blocked = {k: v for k, v in trades.items() if not v["should_trade"]}
+
+    return {
+        "approved_trades": approved,
+        "blocked_trades": blocked,
+        "total_fee_cost": sum(v["fee_cost_sek"] for v in approved.values()),
+        "n_approved": len(approved),
+        "n_blocked": len(blocked)
+    }
+
+
+@app.get("/api/walkforward")
+async def run_walkforward():
+    """Kör walk-forward-backtest med historisk data"""
+    import pandas as pd
+    from walkforward_backtest import WalkForwardEngine, WalkForwardConfig
+    returns = data_service.get_historical_returns()
+    if returns.empty:
+        return {"error": "Ingen historisk data tillgänglig"}
+
+    # Build price data from returns (cumulative)
+    price_data = (1 + returns).cumprod() * 100
+
+    # Generate signal scores from momentum (proxy signals)
+    signals = pd.DataFrame(index=returns.index)
+    for col in returns.columns:
+        # ROC 10d as signal
+        signals[f"{col}_mom"] = returns[col].rolling(10).mean() * 100
+
+    signals = signals.dropna()
+    price_data = price_data.loc[signals.index]
+
+    engine = WalkForwardEngine(WalkForwardConfig(
+        train_months=12,
+        test_months=3,
+        min_train_samples=200
+    ))
+    result = engine.run(price_data, signals)
+    return result
+
+
+@app.get("/api/regime-transition")
+async def get_regime_status():
+    """Hämta aktuell regim-övergångs-status"""
+    return {
+        "current_regime": regime_transition.current_regime,
+        "target_regime": regime_transition.target_regime,
+        "confirmed": regime_transition.confirmed,
+        "step": regime_transition.current_step,
+        "blend_steps": regime_transition.blend_steps,
+        "transition_days": regime_transition.transition_days
+    }
+
+
+# ============================================================
+# Del 2 API Endpoints
+# ============================================================
+
+class DomainNote(BaseModel):
+    text: str
+    category: str = "general"
+    priority: int = 5
+
+
+class PortfolioWeights(BaseModel):
+    weights: dict
+
+
+@app.get("/api/agent-performance")
+async def get_agent_performance(lookback_days: int = 90):
+    """Hämta prestandarapport per agent"""
+    return perf_tracker.get_agent_report(lookback_days)
+
+
+@app.post("/api/risk-attribution")
+async def get_risk_attribution(portfolio: PortfolioWeights):
+    """Vilken position bidrar mest till portföljrisk?"""
+    from risk_attribution import RiskAttribution
+    returns = data_service.get_historical_returns()
+    if returns.empty:
+        return {"error": "Ingen historisk data tillgänglig"}
+    # Filter weights to only include assets in returns data
+    valid_weights = {k: v for k, v in portfolio.weights.items() if k in returns.columns}
+    if not valid_weights:
+        return {"error": "Inga matchande tillgångar i historisk data", "available": list(returns.columns)}
+    attr = RiskAttribution(returns, valid_weights)
+    return attr.compute()
+
+
+@app.post("/api/stress-test")
+async def run_stress_test(portfolio: PortfolioWeights):
+    """Monte Carlo + historiska scenarier"""
+    from stress_test import MonteCarloStressTest
+    returns = data_service.get_historical_returns()
+    if returns.empty:
+        return {"error": "Ingen historisk data tillgänglig"}
+    valid_weights = {k: v for k, v in portfolio.weights.items() if k in returns.columns}
+    if not valid_weights:
+        return {"error": "Inga matchande tillgångar", "available": list(returns.columns)}
+    mc = MonteCarloStressTest(returns, n_simulations=10000, horizon_days=21)
+    result = mc.run(valid_weights)
+    result["historical"] = mc.historical_scenarios(valid_weights)
+    return result
+
+
+@app.post("/api/efficient-frontier")
+async def analyze_frontier(portfolio: PortfolioWeights):
+    """Var på effektiva fronten ligger din portfölj?"""
+    from efficient_frontier import EfficientFrontierAnalyzer
+    returns = data_service.get_historical_returns()
+    if returns.empty:
+        return {"error": "Ingen historisk data tillgänglig"}
+    valid_weights = {k: v for k, v in portfolio.weights.items() if k in returns.columns}
+    if not valid_weights:
+        return {"error": "Inga matchande tillgångar", "available": list(returns.columns)}
+    ef = EfficientFrontierAnalyzer(returns)
+    return ef.analyze_portfolio(valid_weights)
+
+
+@app.post("/api/domain-note")
+async def add_domain_note(note: DomainNote):
+    """Lägg till domänkunskap som injiceras i alla agenter"""
+    return domain_mgr.add_note(note.text, note.category, note.priority)
+
+
+@app.get("/api/domain-notes")
+async def get_domain_notes():
+    """Hämta alla aktiva domännoteringar"""
+    return domain_mgr.get_active_notes()
+
+
+@app.delete("/api/domain-note/{note_id}")
+async def delete_domain_note(note_id: int):
+    """Ta bort en domännotering"""
+    domain_mgr.remove_note(note_id)
+    return {"status": "removed"}

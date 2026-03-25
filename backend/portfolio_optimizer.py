@@ -492,3 +492,169 @@ def optimize_portfolios(assets_analysis: dict) -> dict:
     logger.info(f"  ✅ Turbo:        ret={ret_turbo*100:.1f}%, vol={vol_turbo*100:.1f}%")
 
     return profiles
+
+
+# ============================================================
+# RegimeAwareOptimizer: Separate covariance matrices per regime
+# ============================================================
+
+import pandas as pd
+
+class RegimeAwareOptimizer:
+    """
+    Tre kovariansmatriser: RISK_ON, NEUTRAL, RISK_OFF
+    Väljer matris baserat på detekterad regim
+    """
+
+    def __init__(self, price_data: pd.DataFrame, regime_labels: pd.Series):
+        """
+        price_data: dagliga priser (datum-index, tillgångs-kolumner)
+        regime_labels: Series med "RISK_ON", "NEUTRAL", "RISK_OFF" per datum
+        """
+        self.returns = price_data.pct_change().dropna()
+        self.regime_labels = regime_labels
+        self.cov_matrices = {}
+        self.mean_returns = {}
+        self._build_regime_matrices()
+
+    def _build_regime_matrices(self):
+        for regime in ["RISK_ON", "NEUTRAL", "RISK_OFF"]:
+            mask = self.regime_labels == regime
+            regime_returns = self.returns[mask]
+
+            if len(regime_returns) < 30:
+                # Fallback till full sample med shrinkage
+                regime_returns = self.returns
+
+            # Ledoit-Wolf shrinkage för stabilitet
+            cov = self._shrink_covariance(regime_returns)
+            self.cov_matrices[regime] = cov
+            self.mean_returns[regime] = regime_returns.mean() * 252  # Annualisera
+
+    def _shrink_covariance(self, returns: pd.DataFrame, shrinkage: float = 0.3) -> np.ndarray:
+        """Ledoit-Wolf-liknande shrinkage mot diagonal"""
+        sample_cov = returns.cov().values * 252
+        target = np.diag(np.diag(sample_cov))  # Diagonal matris
+        return (1 - shrinkage) * sample_cov + shrinkage * target
+
+    def optimize(
+        self,
+        regime: str,
+        profile: str = "balanced",
+        risk_free_rate: float = 0.035
+    ) -> dict:
+        """Mean-CVaR optimering för given regim och profil"""
+        cov = self.cov_matrices.get(regime, self.cov_matrices.get("NEUTRAL"))
+        mu = self.mean_returns.get(regime, self.mean_returns.get("NEUTRAL"))
+        n_assets = len(mu)
+        assets = self.returns.columns.tolist()
+
+        # Profilbegränsningar
+        PROFILE_CONSTRAINTS = {
+            "conservative": {"max_risk": 0.35, "min_cash": 0.30, "max_single": 0.10},
+            "balanced":     {"max_risk": 0.55, "min_cash": 0.15, "max_single": 0.15},
+            "aggressive":   {"max_risk": 0.75, "min_cash": 0.05, "max_single": 0.20},
+            "turbo":        {"max_risk": 1.00, "min_cash": 0.03, "max_single": 0.25},
+        }
+        pc = PROFILE_CONSTRAINTS.get(profile, PROFILE_CONSTRAINTS["balanced"])
+
+        def neg_sharpe(weights):
+            port_return = np.dot(weights, mu)
+            port_vol = np.sqrt(np.dot(weights.T, np.dot(cov, weights)))
+            return -(port_return - risk_free_rate) / (port_vol + 1e-8)
+
+        constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
+        bounds = [(0, pc["max_single"]) for _ in range(n_assets)]
+        w0 = np.ones(n_assets) / n_assets
+
+        result = minimize(
+            neg_sharpe, w0,
+            method="SLSQP",
+            bounds=bounds,
+            constraints=constraints,
+            options={"maxiter": 1000}
+        )
+
+        weights = result.x
+        port_return = float(np.dot(weights, mu))
+        port_vol = float(np.sqrt(np.dot(weights.T, np.dot(cov, weights))))
+        sharpe = (port_return - risk_free_rate) / (port_vol + 1e-8)
+
+        return {
+            "weights": {assets[i]: round(float(weights[i]) * 100, 2) for i in range(n_assets)},
+            "expected_return": round(port_return * 100, 2),
+            "volatility": round(port_vol * 100, 2),
+            "sharpe": round(float(sharpe), 3),
+            "regime_used": regime,
+            "profile": profile
+        }
+
+
+# ============================================================
+# Mean-CVaR optimering (bättre tail-risk-hantering)
+# ============================================================
+
+def compute_cvar(returns: np.ndarray, weights: np.ndarray, alpha: float = 0.05) -> float:
+    """
+    Conditional Value at Risk (CVaR) at alpha confidence level.
+    = Genomsnittlig förlust de alpha% sämsta dagarna.
+    """
+    portfolio_returns = returns @ weights
+    sorted_returns = np.sort(portfolio_returns)
+    cutoff_index = int(np.floor(alpha * len(sorted_returns)))
+    if cutoff_index == 0:
+        cutoff_index = 1
+    cvar = -np.mean(sorted_returns[:cutoff_index])
+    return float(cvar)
+
+
+def optimize_mean_cvar(
+    returns_df: pd.DataFrame,
+    risk_free_rate: float = 0.035,
+    alpha: float = 0.05,
+    max_cvar: float = 0.15,
+    bounds: list = None
+) -> dict:
+    """
+    Maximera Sharpe-kvot med CVaR-begränsning
+    istället för volatilitetsbegränsning.
+    """
+    mu = returns_df.mean().values * 252
+    ret_matrix = returns_df.values
+    n = len(mu)
+    assets = returns_df.columns.tolist()
+
+    if bounds is None:
+        bounds = [(0, 0.15) for _ in range(n)]
+
+    def neg_sharpe_cvar(weights):
+        port_return = np.dot(weights, mu)
+        cvar = compute_cvar(ret_matrix, weights, alpha)
+        return -(port_return - risk_free_rate) / (cvar * np.sqrt(252) + 1e-8)
+
+    constraints = [
+        {"type": "eq", "fun": lambda w: np.sum(w) - 1.0},
+        {"type": "ineq", "fun": lambda w: max_cvar - compute_cvar(ret_matrix, w, alpha)},
+    ]
+
+    w0 = np.ones(n) / n
+    result = minimize(
+        neg_sharpe_cvar, w0,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=constraints,
+        options={"maxiter": 1000}
+    )
+
+    weights = result.x
+    port_return = float(np.dot(weights, mu))
+    cvar_val = compute_cvar(ret_matrix, weights, alpha)
+    port_vol = float(np.sqrt(np.dot(weights.T, np.dot(returns_df.cov().values * 252, weights))))
+
+    return {
+        "weights": {assets[i]: round(float(weights[i]) * 100, 2) for i in range(n)},
+        "expected_return_pct": round(port_return * 100, 2),
+        "volatility_pct": round(port_vol * 100, 2),
+        "cvar_95_pct": round(cvar_val * np.sqrt(252) * 100, 2),
+        "sharpe_cvar": round((port_return - risk_free_rate) / (cvar_val * np.sqrt(252) + 1e-8), 3)
+    }

@@ -5,6 +5,8 @@ Caches results and provides APIs for the FastAPI endpoints.
 
 import logging
 import yfinance as yf
+import pandas as pd
+import numpy as np
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -51,6 +53,56 @@ class DataService:
         self.portfolio: dict = {}
         self.market_state: dict = {}
         self.last_refresh: Optional[str] = None
+        # Historical returns cache
+        self._returns_cache: Optional[pd.DataFrame] = None
+        self._returns_cache_time: Optional[datetime] = None
+        self._returns_cache_ttl = 21600  # 6 hours
+
+    def get_historical_returns(self, period: str = "1y") -> pd.DataFrame:
+        """
+        Fetch historical daily returns for all tracked assets.
+        Returns DataFrame with date index and asset columns.
+        Cached for 6 hours.
+        """
+        now = datetime.now()
+        if (self._returns_cache is not None and
+            self._returns_cache_time is not None and
+            (now - self._returns_cache_time).total_seconds() < self._returns_cache_ttl):
+            return self._returns_cache
+
+        logger.info("📊 Fetching historical returns for quantitative modules...")
+        tickers = {aid: info["ticker"] for aid, info in ASSET_TICKERS.items()}
+        ticker_list = list(tickers.values())
+
+        try:
+            data = yf.download(ticker_list, period=period, progress=False)
+            closes = data["Close"] if "Close" in data.columns.get_level_values(0) else data
+
+            # Rename columns from tickers to asset IDs
+            ticker_to_id = {info["ticker"]: aid for aid, info in ASSET_TICKERS.items()}
+            rename_map = {}
+            for col in closes.columns:
+                col_str = str(col)
+                if col_str in ticker_to_id:
+                    rename_map[col] = ticker_to_id[col_str]
+
+            closes = closes.rename(columns=rename_map)
+            returns = closes.pct_change().dropna()
+
+            # Filter out columns with too many NaN
+            valid_cols = [c for c in returns.columns if returns[c].notna().sum() > 100]
+            returns = returns[valid_cols]
+
+            self._returns_cache = returns
+            self._returns_cache_time = now
+            logger.info(f"  ✅ Historical returns: {len(returns)} days × {len(returns.columns)} assets")
+            return returns
+
+        except Exception as e:
+            logger.error(f"  ❌ Failed to fetch historical returns: {e}")
+            if self._returns_cache is not None:
+                return self._returns_cache
+            return pd.DataFrame()
 
     async def refresh_all(self, force: bool = False):
         """Tiered refresh: only runs expensive analysis when due."""

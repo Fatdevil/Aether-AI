@@ -131,7 +131,18 @@ async def analyze_asset(asset_id: str, price_data: dict, news_items: list, categ
         except Exception:
             onchain_ctx = ""
 
-    # Build full context per agent (perf + calendar + correlation + regime + onchain)
+    # Build full context per agent (perf + calendar + correlation + regime + onchain + domain knowledge)
+    try:
+        from domain_knowledge import DomainKnowledgeManager
+        # Use the global domain_mgr from main.py if available, otherwise create local
+        import sys
+        main_mod = sys.modules.get("main") or sys.modules.get("__main__")
+        domain_ctx = ""
+        if main_mod and hasattr(main_mod, "domain_mgr"):
+            domain_ctx = main_mod.domain_mgr.build_agent_context()
+    except Exception:
+        domain_ctx = ""
+
     def build_context(agent_name: str) -> str:
         parts = [
             perf_contexts.get(agent_name, ""),
@@ -142,6 +153,9 @@ async def analyze_asset(asset_id: str, price_data: dict, news_items: list, categ
         # On-chain data only for micro/tech agents (most relevant)
         if onchain_ctx and agent_name in ("micro", "tech"):
             parts.append(onchain_ctx)
+        # Domain knowledge from user
+        if domain_ctx:
+            parts.append(domain_ctx)
         return "\n".join(p for p in parts if p)
 
     # Run agents (sentiment first since it's rule-based/instant)

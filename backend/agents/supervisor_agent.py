@@ -229,3 +229,178 @@ Ge ditt slutvärde som JSON."""
 
         return {"macro": 0.30, "micro": 0.25, "sentiment": 0.20, "tech": 0.25}
 
+
+# ============================================================
+# TangoConsensusFilter: Agent consensus → MPT weight multiplier
+# ============================================================
+
+import numpy as np
+from typing import Dict, List
+
+
+class TangoConsensusFilter:
+    """
+    Tango VIX 2.6-principen: exponering = (consensus/n_agents) × MPT-vikt × (1/vol)
+    Agenter som är överens = mer exponering. Oenighet = mer kassa.
+    """
+
+    def __init__(self, n_agents: int = 5):
+        self.n_agents = n_agents
+
+    def compute_consensus(self, agent_scores: Dict[str, Dict[str, float]]) -> Dict[str, Dict]:
+        """
+        agent_scores: {"macro": {"BTC": 7.5, "GOLD": 3.2, ...}, "micro": {...}, ...}
+        Returns: per-asset consensus info
+        """
+        assets = set()
+        for agent_data in agent_scores.values():
+            assets.update(agent_data.keys())
+
+        consensus = {}
+        for asset in assets:
+            scores = []
+            go_count = 0
+            for agent_name, agent_data in agent_scores.items():
+                score = agent_data.get(asset, 0)
+                scores.append(score)
+                if score > 0:  # GO = positiv score
+                    go_count += 1
+
+            avg_score = np.mean(scores) if scores else 0
+            std_score = np.std(scores) if scores else 0
+
+            consensus[asset] = {
+                "go_count": go_count,
+                "total_agents": self.n_agents,
+                "consensus_fraction": go_count / self.n_agents,
+                "avg_score": round(float(avg_score), 2),
+                "divergence": round(float(std_score), 2),
+                "unanimous": go_count == self.n_agents or go_count == 0,
+            }
+
+        return consensus
+
+    def apply_to_mpt_weights(
+        self,
+        mpt_weights: Dict[str, float],
+        consensus: Dict[str, Dict],
+        vol_multipliers: Dict[str, float] = None,
+        vol_dampen: float = 1.0
+    ) -> Dict[str, float]:
+        """
+        Multiplicera MPT-vikter med consensus-fraktion och vol-justering.
+        Frigjort kapital går till kassa.
+        """
+        adjusted = {}
+        freed = 0.0
+
+        for asset, mpt_weight in mpt_weights.items():
+            if asset in ("kassa", "cash", "kort_ranta"):
+                adjusted[asset] = mpt_weight
+                continue
+
+            cons = consensus.get(asset, {"consensus_fraction": 0.5})
+            frac = cons["consensus_fraction"]
+
+            # Volatilitetsjustering
+            vol_mult = 1.0
+            if vol_multipliers and asset in vol_multipliers:
+                vol_mult = vol_multipliers[asset]
+            vol_adj = min(1.0 / (vol_mult * vol_dampen), 1.5)
+
+            # Conviction boost
+            avg_score = cons.get("avg_score", 0)
+            conviction_mult = 1.0
+            if avg_score > 5:
+                conviction_mult = 1.2
+            elif avg_score < -5:
+                conviction_mult = 0.5
+
+            new_weight = mpt_weight * frac * vol_adj * conviction_mult
+            freed += max(0, mpt_weight - new_weight)
+            adjusted[asset] = round(new_weight, 2)
+
+        # Frigjort kapital till kassa
+        adjusted["kassa"] = adjusted.get("kassa", 0) + round(freed, 2)
+
+        return adjusted
+
+    def detect_divergence_signal(self, consensus: Dict[str, Dict]) -> Dict:
+        """
+        Hög divergens mellan agenter = osäker marknad = öka kassa
+        """
+        divergences = [c["divergence"] for c in consensus.values()]
+        avg_div = np.mean(divergences) if divergences else 0
+        max_div = max(divergences) if divergences else 0
+
+        if avg_div > 4.0:
+            return {"signal": "EXTREME_DIVERGENCE", "cash_boost": 0.15,
+                    "message": f"Agenter extremt oeniga (div={avg_div:.1f}). Öka kassa 15%."}
+        elif avg_div > 2.5:
+            return {"signal": "HIGH_DIVERGENCE", "cash_boost": 0.08,
+                    "message": f"Agenter oeniga (div={avg_div:.1f}). Öka kassa 8%."}
+        else:
+            return {"signal": "NORMAL", "cash_boost": 0.0,
+                    "message": "Normal agent-konsensus."}
+
+
+# ============================================================
+# AdaptiveAgentWeights: Exponential decay weighting
+# ============================================================
+
+class AdaptiveAgentWeights:
+    """
+    Vikter som automatiskt justeras baserat på senaste prestanda.
+    Senaste 30 dagars träffsäkerhet väger mer än 90 dagars.
+    Första 20 prediktionerna: lika vikter (för lite data).
+    """
+
+    def __init__(self, n_agents: int = 5, decay_factor: float = 0.95):
+        self.n_agents = n_agents
+        self.decay = decay_factor
+        self.base_weight = 1.0 / n_agents
+
+    def compute_weights(self, performance_history: Dict[str, list]) -> Dict[str, float]:
+        """
+        performance_history: {
+            "macro": [{"date": "2026-03-01", "correct": True}, ...],
+            "micro": [...], ...
+        }
+        """
+        weights = {}
+        total_score = 0
+
+        for agent, history in performance_history.items():
+            if len(history) < 20:
+                weights[agent] = self.base_weight
+                total_score += self.base_weight
+                continue
+
+            # Exponentiell nedgång: senaste observationer väger mer
+            score = 0
+            weight_sum = 0
+            for i, entry in enumerate(reversed(history)):
+                decay_weight = self.decay ** i
+                score += decay_weight * (1.0 if entry["correct"] else 0.0)
+                weight_sum += decay_weight
+
+            agent_accuracy = score / weight_sum if weight_sum > 0 else 0.5
+
+            # Transformera till vikt (min 0.1, max 0.4 för 5 agenter)
+            agent_weight = max(0.1, min(0.4, agent_accuracy))
+            weights[agent] = agent_weight
+            total_score += agent_weight
+
+        # Normalisera så summan = 1.0
+        if total_score > 0:
+            weights = {a: round(w / total_score, 4) for a, w in weights.items()}
+
+        return weights
+
+    def apply_weights(self, agent_scores: Dict[str, float], weights: Dict[str, float]) -> float:
+        """Beräkna viktat consensus-score"""
+        total = 0
+        for agent, score in agent_scores.items():
+            w = weights.get(agent, self.base_weight)
+            total += score * w
+        return round(total, 2)
