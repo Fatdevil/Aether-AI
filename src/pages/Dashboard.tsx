@@ -233,14 +233,18 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
         })()}
       </section>
 
-      {/* Intelligence Widgets */}
-      <div className="animate-fade-in" style={{ marginBottom: '2rem', animationDelay: '0.05s' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr)', gap: '1rem', marginBottom: '0rem' }}>
+      {/* Intelligence Widgets — Row 1: Compact Trio */}
+      <div className="animate-fade-in" style={{ marginBottom: '1rem', animationDelay: '0.05s' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
           <CalendarWidget />
           <TrendingWidget />
           <PredictivePulse />
-          <CorrelationHeatmap />
         </div>
+      </div>
+
+      {/* Intelligence Widgets — Row 2: Correlation (full width) */}
+      <div className="animate-fade-in" style={{ marginBottom: '2rem', animationDelay: '0.1s' }}>
+        <CorrelationHeatmap />
       </div>
 
       {/* Main Grid */}

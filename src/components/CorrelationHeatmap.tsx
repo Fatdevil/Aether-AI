@@ -282,51 +282,61 @@ export default function CorrelationHeatmap() {
         </div>
       )}
 
-      {/* AI Insights Panel */}
+      {/* AI Insights Panel — Collapsible */}
       {(insights.length > 0 || insightsLoading) && (
-        <div style={{
-          marginTop: '1rem', padding: '1rem', borderRadius: '8px',
-          background: 'rgba(139, 92, 246, 0.05)', border: '1px solid rgba(139, 92, 246, 0.15)',
-        }}>
-          <div className="flex justify-between items-center" style={{ marginBottom: '0.75rem' }}>
-            <h4 style={{ margin: 0, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              🧠 AI-analys
-              <span style={{
-                fontSize: '0.6rem', padding: '0.12rem 0.4rem', borderRadius: '4px',
-                background: insightsSource === 'ai' ? 'rgba(139, 92, 246, 0.2)' : 'rgba(255,255,255,0.06)',
-                color: insightsSource === 'ai' ? '#a78bfa' : 'var(--text-tertiary)',
-              }}>
-                {insightsSource === 'ai' ? 'Gemini' : 'rule-based'}
-              </span>
-            </h4>
-            <span style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
-              {period}
+        <div style={{ marginTop: '0.75rem' }}>
+          <button
+            onClick={() => {
+              const el = document.getElementById('corr-insights');
+              if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+            }}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: '0.78rem', color: '#a78bfa', fontWeight: 600,
+              padding: '0.3rem 0', display: 'flex', alignItems: 'center', gap: '0.3rem',
+            }}
+          >
+            🧠 AI-analys
+            <span style={{
+              fontSize: '0.6rem', padding: '0.1rem 0.35rem', borderRadius: '4px',
+              background: insightsSource === 'ai' ? 'rgba(139,92,246,0.2)' : 'rgba(255,255,255,0.06)',
+              color: insightsSource === 'ai' ? '#a78bfa' : 'var(--text-tertiary)',
+            }}>
+              {insightsSource === 'ai' ? 'Gemini' : 'rule-based'}
             </span>
-          </div>
-
-          {insightsLoading ? (
-            <div style={{ textAlign: 'center', padding: '0.75rem', color: 'var(--text-tertiary)', fontSize: '0.82rem' }}>
-              🔄 Analyserar korrelationsmatris...
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {insights.map((insight, i) => (
-                <div key={i} className="animate-fade-in" style={{
-                  padding: '0.7rem 0.85rem', borderRadius: '6px',
-                  background: 'rgba(255,255,255,0.02)',
-                  borderLeft: '3px solid rgba(139, 92, 246, 0.4)',
-                  animationDelay: `${i * 0.08}s`,
-                }}>
-                  <div style={{ fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.25rem' }}>
-                    {insight.icon} {insight.title}
-                  </div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                    {insight.text}
-                  </div>
+            <span style={{ fontSize: '0.65rem', color: 'var(--text-tertiary)', marginLeft: '0.3rem' }}>
+              {insights.length} insikter — klicka för att visa ▾
+            </span>
+          </button>
+          <div id="corr-insights" style={{ display: 'none', marginTop: '0.5rem' }}>
+            <div style={{
+              padding: '0.75rem', borderRadius: '8px',
+              background: 'rgba(139, 92, 246, 0.04)', border: '1px solid rgba(139, 92, 246, 0.1)',
+            }}>
+              {insightsLoading ? (
+                <div style={{ textAlign: 'center', padding: '0.5rem', color: 'var(--text-tertiary)', fontSize: '0.82rem' }}>
+                  🔄 Analyserar...
                 </div>
-              ))}
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {insights.map((insight, i) => (
+                    <div key={i} style={{
+                      padding: '0.5rem 0.7rem', borderRadius: '6px',
+                      background: 'rgba(255,255,255,0.02)',
+                      borderLeft: '3px solid rgba(139, 92, 246, 0.3)',
+                    }}>
+                      <div style={{ fontSize: '0.78rem', fontWeight: 600, marginBottom: '0.15rem' }}>
+                        {insight.icon} {insight.title}
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                        {insight.text}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>

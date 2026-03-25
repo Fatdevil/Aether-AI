@@ -73,7 +73,7 @@ export default function TrendingWidget() {
       </h4>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-        {trending.slice(0, 10).map((entity, i) => (
+        {trending.slice(0, 5).map((entity, i) => (
           <div key={entity.symbol} style={{
             display: 'flex', alignItems: 'center', gap: '0.5rem',
             padding: '0.35rem 0.5rem', borderRadius: '6px',
