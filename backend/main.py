@@ -28,7 +28,11 @@ from rebalance_scheduler import RebalanceScheduler
 from drawdown_estimator import DrawdownRecoveryEstimator
 from multi_timeframe import MultiTimeframeConfirmation
 from api_cost_tracker import APICostTracker
-from predictive import CausalChainEngine, EventTreeEngine, LeadLagDetector, NarrativeTracker, PredictiveOrchestrator
+from predictive import (CausalChainEngine, EventTreeEngine, LeadLagDetector, NarrativeTracker,
+                        PredictiveOrchestrator, MarketActorSimulation, ConvexityOptimizer,
+                        ConfidenceCalibrator, MetaStrategySelector, AdversarialAgent)
+from daily_scheduler import DailyScheduler
+from system_health import SystemHealthCheck
 from llm_provider import call_llm, parse_llm_json
 
 logging.basicConfig(level=logging.INFO)
@@ -53,6 +57,14 @@ event_tree_engine = EventTreeEngine()
 lead_lag_detector = LeadLagDetector()
 narrative_tracker = NarrativeTracker()
 predictor = PredictiveOrchestrator()
+actor_sim = MarketActorSimulation()
+confidence_cal = ConfidenceCalibrator()
+meta_strategy = MetaStrategySelector()
+adversarial = AdversarialAgent()
+health_check = SystemHealthCheck()
+# ConvexityOptimizer initialized per-request (needs asset list)
+# DailyScheduler initialized after all modules
+daily_sched = DailyScheduler(predictor, actor_sim, None, confidence_cal, meta_strategy, adversarial, health_check)
 
 
 @asynccontextmanager
@@ -1631,3 +1643,119 @@ async def get_unprocessed():
     return [{"id": e.id, "title": e.title, "severity": e.severity,
              "category": e.category, "assets": e.affected_assets}
             for e in events]
+
+
+# ============================================================
+# Del 5: Final Push — Actor Sim, Convexity, Meta, Adversarial
+# ============================================================
+
+@app.post("/api/predictive/actor-simulation")
+async def run_actor_simulation(event: str = "Global trade war escalation", context: str = ""):
+    """Simulera 10 marknadsaktörers reaktion på en händelse"""
+    prompt = actor_sim.build_simulation_prompt(event, context)
+    ai_resp = await call_llm(
+        "gemini",
+        "Du är en marknads-simulator. Svara ENBART med JSON.",
+        prompt, temperature=0.4, max_tokens=4000
+    )
+    parsed = parse_llm_json(ai_resp)
+    if not parsed:
+        return {"error": "AI parsing failed"}
+    result = actor_sim.parse_simulation(parsed, event)
+    from dataclasses import asdict
+    return asdict(result)
+
+
+@app.get("/api/predictive/actor-intelligence")
+async def get_actor_intelligence():
+    """Aggregerad intelligens från alla simuleringar"""
+    return actor_sim.get_aggregated_actor_intelligence()
+
+
+@app.post("/api/predictive/convexity-optimize")
+async def convexity_optimize():
+    """Scenario-baserad portföljoptimering med event trees"""
+    from dataclasses import asdict
+    asset_ids = [a.get("id", "") for a in data_service.assets[:10]]
+    if not asset_ids:
+        return {"error": "No assets loaded"}
+
+    optimizer = ConvexityOptimizer(asset_ids)
+
+    # Hämta scenarion från event trees
+    trees_data = []
+    for tree in event_tree_engine.trees[-5:]:
+        trees_data.append(asdict(tree))
+
+    if not trees_data:
+        # Generera default-scenarion
+        from predictive.convexity_optimizer import Scenario
+        scenarios = [
+            Scenario("Bull market", 0.25, {a: 0.15 for a in asset_ids}),
+            Scenario("Base case", 0.40, {a: 0.06 for a in asset_ids}),
+            Scenario("Mild recession", 0.20, {a: -0.10 for a in asset_ids}),
+            Scenario("Crisis", 0.15, {a: -0.25 for a in asset_ids}),
+        ]
+    else:
+        scenarios = optimizer.build_scenarios_from_trees(trees_data)
+
+    if not scenarios:
+        return {"error": "No scenarios available"}
+
+    max_exp = optimizer.optimize_max_expected(scenarios)
+    max_conv = optimizer.optimize_max_convexity(scenarios)
+
+    return {
+        "max_expected": asdict(max_exp),
+        "max_convexity": asdict(max_conv),
+        "n_scenarios": len(scenarios),
+        "scenario_names": [s.name for s in scenarios[:10]]
+    }
+
+
+@app.get("/api/predictive/confidence")
+async def get_confidence_calibration():
+    """Kalibrering av systemets sannolikhetsbedömningar"""
+    return confidence_cal.compute_calibration()
+
+
+@app.get("/api/predictive/confidence/per-source")
+async def get_confidence_per_source():
+    """Kalibrering per prediktionskälla"""
+    return confidence_cal.per_source_calibration()
+
+
+@app.get("/api/predictive/meta-strategy")
+async def get_meta_strategy():
+    """Diagnostik för meta-strategi (vikter per regim)"""
+    return meta_strategy.get_diagnostics()
+
+
+@app.post("/api/predictive/adversarial-check")
+async def adversarial_check(asset: str = "SP500", action: str = "KÖP", reasoning: str = "Stark teknisk signal"):
+    """Devils Advocate: utmana en portföljrekommendation"""
+    from dataclasses import asdict
+    rec = {"asset": asset, "action": action, "reasoning": reasoning}
+    prompt = adversarial.build_challenge_prompt(rec)
+    ai_resp = await call_llm(
+        "gemini",
+        "Du är en DEVILS ADVOCATE. Svara ENBART med JSON.",
+        prompt, temperature=0.4, max_tokens=2000
+    )
+    parsed = parse_llm_json(ai_resp)
+    if not parsed:
+        return {"error": "AI parsing failed"}
+    result = adversarial.parse_challenge(parsed, rec)
+    return asdict(result)
+
+
+@app.get("/api/system/health")
+async def system_health():
+    """Systemhälsa: datafärskhet, filstorlek, pipeline-status"""
+    return health_check.run_checks()
+
+
+@app.get("/api/system/scheduler-status")
+async def scheduler_status():
+    """Status för daglig scheduler"""
+    return daily_sched.get_status()
