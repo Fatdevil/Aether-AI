@@ -21,6 +21,15 @@ from risk_manager import PortfolioRiskManager
 from transaction_filter import filter_rebalancing
 from agent_performance import AgentPerformanceTracker
 from domain_knowledge import DomainKnowledgeManager
+from currency_hedge import CurrencyHedgeCalculator
+from tax_optimizer import SwedishTaxOptimizer
+from macro_calendar import MacroEventCalendar
+from rebalance_scheduler import RebalanceScheduler
+from drawdown_estimator import DrawdownRecoveryEstimator
+from multi_timeframe import MultiTimeframeConfirmation
+from api_cost_tracker import APICostTracker
+from predictive import CausalChainEngine, EventTreeEngine, LeadLagDetector, NarrativeTracker, PredictiveOrchestrator
+from llm_provider import call_llm, parse_llm_json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("aether")
@@ -32,6 +41,18 @@ data_service = DataService()
 risk_manager = PortfolioRiskManager()
 perf_tracker = AgentPerformanceTracker()
 domain_mgr = DomainKnowledgeManager()
+currency_calc = CurrencyHedgeCalculator()
+tax_opt = SwedishTaxOptimizer()
+macro_cal = MacroEventCalendar()
+rebalance_sched = RebalanceScheduler()
+dd_estimator = DrawdownRecoveryEstimator()
+mtf = MultiTimeframeConfirmation()
+cost_tracker = APICostTracker(monthly_budget_usd=50.0)
+causal_engine = CausalChainEngine()
+event_tree_engine = EventTreeEngine()
+lead_lag_detector = LeadLagDetector()
+narrative_tracker = NarrativeTracker()
+predictor = PredictiveOrchestrator()
 
 
 @asynccontextmanager
@@ -1156,3 +1177,457 @@ async def delete_domain_note(note_id: int):
     """Ta bort en domännotering"""
     domain_mgr.remove_note(note_id)
     return {"status": "removed"}
+
+
+# ============================================================
+# Del 3 API Endpoints
+# ============================================================
+
+class TaxAnalysisRequest(BaseModel):
+    holdings: list
+    total_isk_value: float = 0
+
+
+class RebalanceCheckRequest(BaseModel):
+    current_weights: dict
+    target_weights: dict
+    regime_changed: bool = False
+    portfolio_value: float = 0
+
+
+@app.post("/api/currency-exposure")
+async def analyze_currency(portfolio: PortfolioWeights):
+    """Analysera valutaexponering och föreslå hedging"""
+    return currency_calc.analyze_exposure(portfolio.weights)
+
+
+@app.post("/api/tax-optimize")
+async def optimize_tax(request: TaxAnalysisRequest):
+    """Analysera skatteoptimal placering per tillgång (ISK/Depå)"""
+    return tax_opt.analyze_portfolio(request.holdings, request.total_isk_value)
+
+
+@app.get("/api/tax-quick-check")
+async def quick_tax_check(value: float, expected_return: float):
+    """Snabbkoll: ISK eller depå?"""
+    return {"recommendation": tax_opt.quick_check(value, expected_return)}
+
+
+@app.get("/api/tax-parameters")
+async def get_tax_params():
+    """Aktuella skatteparametrar 2026"""
+    return {
+        "year": 2026,
+        "statslaneranta": "2.55%",
+        "schablonintakt": "3.55%",
+        "effektiv_isk_skatt": "1.065%",
+        "skattefri_grundniva": "300 000 kr",
+        "breakeven": "3.55%",
+        "depa_vinstskatt": "30%",
+        "source": "Riksgälden 28 nov 2025, Morningstar, Carnegie"
+    }
+
+
+@app.get("/api/macro-calendar")
+async def get_macro_calendar(days_ahead: int = 14):
+    """Kommande makro-events med impact-bedömning"""
+    return macro_cal.get_upcoming(days_ahead)
+
+
+@app.post("/api/should-rebalance")
+async def check_rebalance(request: RebalanceCheckRequest):
+    """Smart rebalanserings-check: kalender + drift + signal"""
+    return rebalance_sched.should_rebalance(
+        request.current_weights,
+        request.target_weights,
+        request.regime_changed,
+        portfolio_value=request.portfolio_value
+    )
+
+
+@app.get("/api/drawdown-recovery")
+async def estimate_recovery(drawdown_pct: float, annual_return: float = 0.08, volatility: float = 0.12):
+    """Uppskatta återhämtningstid från drawdown"""
+    return dd_estimator.estimate(drawdown_pct, annual_return, volatility)
+
+
+@app.get("/api/cost-summary")
+async def get_costs():
+    """API-kostnadssammanfattning med budget-prognos"""
+    return cost_tracker.get_summary()
+
+
+# ============================================================
+# Del 4: Predictive Intelligence Endpoints
+# ============================================================
+
+class CausalRequest(BaseModel):
+    event: str
+    context: str = ""
+
+class TreeRequest(BaseModel):
+    event: str
+    context: str = ""
+
+class ChainActionRequest(BaseModel):
+    chain_id: str
+    action: str
+    reason: str = ""
+
+class NarrativeUpdateRequest(BaseModel):
+    market_context: str
+
+
+@app.post("/api/predictive/causal-chain/build")
+async def build_causal_chain(request: CausalRequest):
+    """Bygg en ny kausal kedja för en händelse via AI"""
+    prompt = causal_engine.build_chain_prompt(request.event, request.context)
+    try:
+        response = await call_llm(
+            "gemini",
+            "Du är en kausal analysexpert. Svara ENBART med JSON.",
+            prompt, temperature=0.4, max_tokens=2000
+        )
+        parsed = parse_llm_json(response)
+        if parsed:
+            chain = causal_engine.parse_chain_response(parsed, request.event)
+            from dataclasses import asdict
+            return asdict(chain)
+        return {"error": "AI returned no valid JSON", "prompt": prompt}
+    except Exception as e:
+        logger.error(f"Causal chain build failed: {e}")
+        return {"error": str(e), "prompt": prompt}
+
+
+@app.get("/api/predictive/causal-chain/implications")
+async def get_chain_implications(min_probability: float = 0.10):
+    """Aggregerade portfölj-implikationer från alla aktiva kedjor"""
+    return causal_engine.get_portfolio_implications(min_probability)
+
+
+@app.post("/api/predictive/causal-chain/action")
+async def chain_action(request: ChainActionRequest):
+    """Bekräfta eller invalidera en kedja"""
+    if request.action == "confirm":
+        causal_engine.confirm_chain(request.chain_id)
+    elif request.action == "invalidate":
+        causal_engine.invalidate_chain(request.chain_id, request.reason)
+    return {"status": "ok"}
+
+
+@app.get("/api/predictive/causal-chain/accuracy")
+async def chain_accuracy():
+    """Hur ofta har kedjorna stämt?"""
+    return causal_engine.get_chain_accuracy()
+
+
+@app.post("/api/predictive/event-tree/build")
+async def build_event_tree(request: TreeRequest):
+    """Bygg ett event-sannolikhetsträd via AI"""
+    prompt = event_tree_engine.build_tree_prompt(request.event, request.context)
+    try:
+        response = await call_llm(
+            "gemini",
+            "Du är en scenarioanalytiker. Svara ENBART med JSON.",
+            prompt, temperature=0.4, max_tokens=3000
+        )
+        parsed = parse_llm_json(response)
+        if parsed:
+            tree = event_tree_engine.parse_tree_response(parsed)
+            from dataclasses import asdict
+            return asdict(tree)
+        return {"error": "AI returned no valid JSON", "prompt": prompt}
+    except Exception as e:
+        logger.error(f"Event tree build failed: {e}")
+        return {"error": str(e), "prompt": prompt}
+
+
+@app.get("/api/predictive/event-tree/convex-positions")
+async def get_convex_positions():
+    """Positioner som tjänar i de flesta scenarier (konvexitet)"""
+    return event_tree_engine.get_all_convex_positions()
+
+
+@app.get("/api/predictive/lead-lag/signals")
+async def get_lead_lag_signals():
+    """Aktionerbara lead-lag-signaler från verklig data"""
+    returns = data_service.get_historical_returns()
+    if returns.empty:
+        return {"error": "Ingen historisk data tillgänglig"}
+    return lead_lag_detector.get_actionable_signals(returns)
+
+
+@app.get("/api/predictive/narratives")
+async def get_narrative_dashboard():
+    """Narrativ-dashboard med livscykel-status"""
+    return narrative_tracker.get_dashboard()
+
+
+@app.post("/api/predictive/narratives/update")
+async def update_narratives(request: NarrativeUpdateRequest):
+    """Uppdatera narrativ-analys via AI"""
+    prompt = narrative_tracker.build_narrative_prompt(request.market_context)
+    try:
+        response = await call_llm(
+            "gemini",
+            "Du är en marknadsnarratologisk analytiker. Svara ENBART med JSON.",
+            prompt, temperature=0.3, max_tokens=2000
+        )
+        parsed = parse_llm_json(response)
+        if parsed:
+            narrative_tracker.update_narratives(parsed)
+            return narrative_tracker.get_dashboard()
+        return {"error": "AI returned no valid JSON", "prompt": prompt}
+    except Exception as e:
+        logger.error(f"Narrative update failed: {e}")
+        return {"error": str(e), "prompt": prompt}
+
+
+@app.get("/api/predictive/summary")
+async def predictive_summary():
+    """Komplett prediktiv sammanfattning"""
+    chain_impl = causal_engine.get_portfolio_implications()
+    convex = event_tree_engine.get_all_convex_positions()
+    narr_dashboard = narrative_tracker.get_dashboard()
+
+    # Lead-lag signals
+    ll_signals = []
+    try:
+        returns = data_service.get_historical_returns()
+        if not returns.empty:
+            ll_signals = lead_lag_detector.get_actionable_signals(returns)
+    except Exception:
+        pass
+
+    return {
+        "causal_chains": {
+            "active": len([c for c in causal_engine.active_chains if c.status == "ACTIVE"]),
+            "top_implications": dict(list(chain_impl.get("assets", {}).items())[:5]),
+            "top_action": chain_impl.get("top_action")
+        },
+        "convex_positions": convex[:5],
+        "lead_lag": {
+            "n_signals": len(ll_signals),
+            "top_signals": ll_signals[:3]
+        },
+        "narratives": {
+            "active": narr_dashboard["active_narratives"],
+            "risk_level": narr_dashboard["risk_level"],
+            "signals": narr_dashboard["signals"][:3]
+        },
+        "overall_predictive_confidence": "MEDIUM"
+    }
+
+
+# ============================================================
+# Del 4B: Autonomous Predictive Pipeline
+# ============================================================
+
+@app.post("/api/predictive/run-pipeline")
+async def run_predictive_pipeline():
+    """
+    KÖR HELA PREDIKTIVA PIPELINE AUTONOMT.
+    Drar verklig data från data_service, skickar AI-prompts,
+    bygger kedjor/träd, och genererar portföljrekommendationer.
+    """
+    pipeline_start = datetime.now()
+    steps_log = []
+
+    try:
+        # ---- STEG 1: Hämta data från befintliga moduler ----
+        news_items = data_service.get_news()
+        news_summary = "\n".join([
+            f"- {n.get('title', '')} ({n.get('source', '')})"
+            for n in (news_items or [])[:20]
+        ]) or "Inga nyheter tillgängliga."
+
+        # Prisdata
+        prices = data_service.prices or {}
+        recent_prices = {}
+        daily_returns_dict = {}
+        for asset_id, price_data in prices.items():
+            if isinstance(price_data, dict):
+                p = price_data.get("price", 0)
+                chg = price_data.get("change_pct", 0)
+                recent_prices[asset_id] = p
+                daily_returns_dict[asset_id] = chg / 100 if chg else 0
+            elif isinstance(price_data, (int, float)):
+                recent_prices[asset_id] = price_data
+
+        # Historisk volatilitet för anomali-detektion
+        returns_df = data_service.get_historical_returns()
+        historical_std = {}
+        if not returns_df.empty:
+            for col in returns_df.columns:
+                historical_std[col] = float(returns_df[col].std())
+
+        # Agent-outputs (från senaste analyserna)
+        agent_outputs = {}
+        agent_scores_current = {}
+        agent_scores_previous = {}  # TODO: spara förra körningens scores
+        for asset in data_service.assets:
+            asset_id = asset.get("id", "")
+            analysis = asset.get("analysis", {})
+            if analysis:
+                for agent_name in ["macro", "micro", "technical", "sentiment", "onchain"]:
+                    agent_data = analysis.get(agent_name, {})
+                    if agent_data:
+                        key = f"{agent_name}_{asset_id}"
+                        summary = agent_data.get("summary", agent_data.get("reasoning", ""))
+                        if summary:
+                            agent_outputs[key] = summary[:200]
+                        score = agent_data.get("score", 0)
+                        if agent_name not in agent_scores_current:
+                            agent_scores_current[agent_name] = {}
+                        agent_scores_current[agent_name][asset_id] = score
+
+        steps_log.append("data_collection_complete")
+
+        # ---- STEG 2: Kör EventDetector (autonom detektion) ----
+        existing_chains = [c.trigger_event for c in predictor.causal_engine.active_chains]
+
+        detection = predictor.event_detector.run_full_detection(
+            news_summary=news_summary,
+            agent_outputs=agent_outputs,
+            recent_prices=recent_prices,
+            daily_returns=daily_returns_dict,
+            historical_std=historical_std,
+            current_agent_scores=agent_scores_current,
+            previous_agent_scores=agent_scores_previous,
+            existing_chain_titles=existing_chains
+        )
+        steps_log.append("event_detection_complete")
+
+        # ---- STEG 3: AI-baserad händelsedetektion ----
+        ai_events = []
+        ai_detection_prompt = detection.get("ai_detection_prompt", "")
+        if ai_detection_prompt:
+            ai_resp = await call_llm(
+                "gemini",
+                "Du är en händelsedetekterings-AI. Svara ENBART med JSON.",
+                ai_detection_prompt,
+                temperature=0.3, max_tokens=2000
+            )
+            parsed = parse_llm_json(ai_resp)
+            if parsed:
+                processed = predictor.process_ai_detection_response(parsed)
+                ai_events = processed.get("events", [])
+
+                # Bygg kausala kedjor för CRITICAL/HIGH händelser
+                for chain_req in processed.get("chains_to_build", [])[:3]:
+                    chain_resp = await call_llm(
+                        "gemini",
+                        "Du är en kausal analysexpert. Svara ENBART med JSON.",
+                        chain_req["chain_prompt"],
+                        temperature=0.4, max_tokens=2000
+                    )
+                    chain_parsed = parse_llm_json(chain_resp)
+                    if chain_parsed:
+                        predictor.process_ai_chain_response(
+                            chain_req["event_id"], chain_parsed
+                        )
+
+                # Bygg event trees för CRITICAL händelser
+                for tree_req in processed.get("trees_to_build", [])[:2]:
+                    tree_resp = await call_llm(
+                        "gemini",
+                        "Du är en scenarioanalytiker. Svara ENBART med JSON.",
+                        tree_req["tree_prompt"],
+                        temperature=0.4, max_tokens=3000
+                    )
+                    tree_parsed = parse_llm_json(tree_resp)
+                    if tree_parsed:
+                        predictor.process_ai_tree_response(
+                            tree_req["event_id"], tree_parsed
+                        )
+
+                steps_log.append("ai_chains_trees_complete")
+
+        # ---- STEG 4: Uppdatera narrativ via AI ----
+        narr_prompt = predictor.narrative.build_narrative_prompt(news_summary[:1000])
+        narr_resp = await call_llm(
+            "gemini",
+            "Du är en marknadsnarratologisk analytiker. Svara ENBART med JSON.",
+            narr_prompt,
+            temperature=0.3, max_tokens=2000
+        )
+        narr_parsed = parse_llm_json(narr_resp)
+        if narr_parsed:
+            predictor.process_ai_narrative_response(narr_parsed)
+        steps_log.append("narrative_update_complete")
+
+        # ---- STEG 5: Lead-lag signaler ----
+        ll_signals = []
+        if not returns_df.empty:
+            ll_signals = predictor.lead_lag.get_actionable_signals(returns_df)
+        steps_log.append("lead_lag_complete")
+
+        # ---- STEG 6: Aggregera & rekommendera ----
+        chain_impl = predictor.causal_engine.get_portfolio_implications()
+        convex = predictor.event_tree.get_all_convex_positions()
+        narr_signals = predictor.narrative.get_trading_signals()
+        narr_dashboard = predictor.narrative.get_dashboard()
+
+        expired = predictor.causal_engine.expire_old_chains()
+        steps_log.append("aggregation_complete")
+
+        portfolio_rec = predictor._generate_portfolio_recommendation(
+            chain_impl, convex, ll_signals, narr_signals
+        )
+
+        duration = (datetime.now() - pipeline_start).total_seconds()
+
+        return {
+            "status": "COMPLETE",
+            "duration_seconds": round(duration, 1),
+            "steps": steps_log,
+            "detection": {
+                "auto_events": detection["total_detected"],
+                "ai_events": len(ai_events),
+                "critical": detection["critical_count"],
+                "high": detection["high_count"],
+                "price_anomalies": len([e for e in detection.get("auto_detected_events", [])
+                                        if e.get("source") == "price_anomaly"]),
+                "agent_divergences": len([e for e in detection.get("auto_detected_events", [])
+                                          if e.get("source") == "agent_divergence"]),
+            },
+            "causal_chains": {
+                "active": len([c for c in predictor.causal_engine.active_chains
+                               if c.status == "ACTIVE"]),
+                "expired": expired,
+                "implications": dict(list(chain_impl.get("assets", {}).items())[:5]),
+            },
+            "event_trees": {
+                "convex_positions": convex[:3],
+            },
+            "lead_lag": {
+                "actionable_signals": len(ll_signals),
+                "top": ll_signals[:3],
+            },
+            "narratives": narr_dashboard,
+            "portfolio_recommendation": portfolio_rec,
+        }
+
+    except Exception as e:
+        logger.error(f"Pipeline failed: {e}")
+        return {
+            "status": "ERROR",
+            "error": str(e),
+            "steps_completed": steps_log,
+            "duration_seconds": round((datetime.now() - pipeline_start).total_seconds(), 1)
+        }
+
+
+@app.get("/api/predictive/event-log")
+async def get_event_log():
+    """Historik över detekterade händelser"""
+    return predictor.event_detector.get_statistics()
+
+
+@app.get("/api/predictive/unprocessed-events")
+async def get_unprocessed():
+    """Händelser som väntar på analys"""
+    events = predictor.event_detector.get_unprocessed()
+    return [{"id": e.id, "title": e.title, "severity": e.severity,
+             "category": e.category, "assets": e.affected_assets}
+            for e in events]
