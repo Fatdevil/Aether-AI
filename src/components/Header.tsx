@@ -25,6 +25,7 @@ export default function Header({ marketState }: HeaderProps) {
     { path: '/news', label: 'Nyheter' },
     { path: '/performance', label: 'AI Prestanda' },
     { path: '/backtest', label: 'Backtest' },
+    { path: '/predict', label: '🧠 Predict' },
     { path: '/global', label: 'Global' },
   ];
 

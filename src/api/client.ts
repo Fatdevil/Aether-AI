@@ -215,6 +215,60 @@ class AetherAPI {
     const response = await fetch(`${this.baseUrl}/api/portfolio/positions/${id}`, { method: 'DELETE' });
     return response.json();
   }
+
+  // ---- Predictive Intelligence (Del 4B + 5) ----
+
+  async getPredictiveSummary(): Promise<any> {
+    return this.fetch('/api/predictive/summary');
+  }
+
+  async getEventLog(): Promise<any> {
+    return this.fetch('/api/predictive/event-log');
+  }
+
+  async getUnprocessedEvents(): Promise<any> {
+    return this.fetch('/api/predictive/unprocessed-events');
+  }
+
+  async runPipeline(): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/api/predictive/run-pipeline`, { method: 'POST' });
+    return response.json();
+  }
+
+  async getActorIntelligence(): Promise<any> {
+    return this.fetch('/api/predictive/actor-intelligence');
+  }
+
+  async runActorSimulation(event: string, context: string = ''): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/api/predictive/actor-simulation?event=${encodeURIComponent(event)}&context=${encodeURIComponent(context)}`, { method: 'POST' });
+    return response.json();
+  }
+
+  async getConfidence(): Promise<any> {
+    return this.fetch('/api/predictive/confidence');
+  }
+
+  async getMetaStrategy(): Promise<any> {
+    return this.fetch('/api/predictive/meta-strategy');
+  }
+
+  async runAdversarialCheck(asset: string, action: string, reasoning: string): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/api/predictive/adversarial-check?asset=${encodeURIComponent(asset)}&action=${encodeURIComponent(action)}&reasoning=${encodeURIComponent(reasoning)}`, { method: 'POST' });
+    return response.json();
+  }
+
+  async getSystemHealth(): Promise<any> {
+    return this.fetch('/api/system/health');
+  }
+
+  async getAutoStatus(): Promise<any> {
+    return this.fetch('/api/predictive/auto-status');
+  }
+
+  async convexityOptimize(): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/api/predictive/convexity-optimize`, { method: 'POST' });
+    return response.json();
+  }
 }
 
 // Intelligence types

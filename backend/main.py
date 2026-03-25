@@ -6,7 +6,7 @@ Hämtar riktiga priser via yfinance, nyheter via RSS och tillhandahåller REST A
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -67,28 +67,368 @@ health_check = SystemHealthCheck()
 daily_sched = DailyScheduler(predictor, actor_sim, None, confidence_cal, meta_strategy, adversarial, health_check)
 
 
+# ============================================================
+# AUTONOM BAKGRUNDSLOOP
+# Pipeline körs automatiskt — inga manuella knappar behövs
+# ============================================================
+
+_last_pipeline_run: datetime | None = None
+_last_pipeline_result: dict | None = None
+_pipeline_run_count: int = 0
+PIPELINE_INTERVAL_HOURS = 6
+EVENT_DETECT_INTERVAL_REFRESHES = 3  # Kör event detection var 3:e refresh (~15 min)
+_refresh_count = 0
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: fetch initial data. Shutdown: cleanup."""
+    """Startup: fetch initial data + start background loops."""
     logger.info("🚀 Aether AI Backend starting...")
     await data_service.refresh_all()
-    # Start background refresh loop
-    task = asyncio.create_task(background_refresh())
+    # Start background loops
+    refresh_task = asyncio.create_task(background_refresh())
+    predictive_task = asyncio.create_task(background_predictive_loop())
     yield
-    task.cancel()
+    refresh_task.cancel()
+    predictive_task.cancel()
     logger.info("Aether AI Backend shutting down.")
 
 
 async def background_refresh():
-    """Refresh market data every 5 minutes."""
+    """Refresh market data every 5 minutes + lightweight event detection."""
+    global _refresh_count
     while True:
         await asyncio.sleep(300)  # 5 min
         try:
             logger.info("🔄 Refreshing market data...")
             await data_service.refresh_all()
-            logger.info("✅ Market data refreshed.")
+            _refresh_count += 1
+            logger.info(f"✅ Market data refreshed (#{_refresh_count}).")
+
+            # Kör lätt event detection var 3:e refresh
+            if _refresh_count % EVENT_DETECT_INTERVAL_REFRESHES == 0:
+                try:
+                    await _run_lightweight_event_detection()
+                except Exception as e:
+                    logger.error(f"Event detection failed: {e}")
+
         except Exception as e:
             logger.error(f"❌ Refresh failed: {e}")
+
+
+async def _run_lightweight_event_detection():
+    """Kör bara prisavvikelse + agent-divergens-detektion (inga AI-anrop)."""
+    logger.info("👁 Running lightweight event detection...")
+    prices = data_service.prices or {}
+    recent_prices = {}
+    daily_returns_dict = {}
+    for asset_id, price_data in prices.items():
+        if isinstance(price_data, dict):
+            recent_prices[asset_id] = price_data.get("price", 0)
+            daily_returns_dict[asset_id] = price_data.get("change_pct", 0) / 100
+
+    returns_df = data_service.get_historical_returns()
+    historical_std = {}
+    if not returns_df.empty:
+        for col in returns_df.columns:
+            historical_std[col] = float(returns_df[col].std())
+
+    # Agent scores
+    agent_scores_current = {}
+    for asset in data_service.assets:
+        analysis = asset.get("analysis", {})
+        for agent_name in ["macro", "micro", "technical", "sentiment"]:
+            agent_data = analysis.get(agent_name, {})
+            if agent_data:
+                if agent_name not in agent_scores_current:
+                    agent_scores_current[agent_name] = {}
+                agent_scores_current[agent_name][asset.get("id", "")] = agent_data.get("score", 0)
+
+    detection = predictor.event_detector.run_full_detection(
+        news_summary="",
+        agent_outputs={},
+        recent_prices=recent_prices,
+        daily_returns=daily_returns_dict,
+        historical_std=historical_std,
+        agent_scores=agent_scores_current,
+        previous_agent_scores={},
+        existing_chains=[c.trigger_event for c in predictor.causal_engine.active_chains],
+    )
+
+    detected_count = detection.get("total_detected", 0)
+    critical_count = detection.get("critical_count", 0)
+    if detected_count > 0:
+        logger.info(f"👁 Detected {detected_count} events ({critical_count} critical)")
+
+        # Auto-trigger actor simulation on CRITICAL events
+        if critical_count > 0:
+            critical_events = [e for e in detection.get("auto_detected_events", [])
+                              if e.get("severity") == "CRITICAL"]
+            for event in critical_events[:1]:
+                try:
+                    logger.info(f"🎭 Auto-simulating critical event: {event.get('title', '?')}")
+                    sim_prompt = actor_sim.build_simulation_prompt(event.get("title", ""))
+                    sim_resp = await call_llm("gemini", "Marknads-simulator. JSON.", sim_prompt, temperature=0.4, max_tokens=4000)
+                    sim_parsed = parse_llm_json(sim_resp)
+                    if sim_parsed:
+                        actor_sim.parse_simulation(sim_parsed, event.get("title", ""))
+                        logger.info("🎭 Actor simulation complete")
+                except Exception as e:
+                    logger.error(f"Actor sim failed: {e}")
+
+
+async def background_predictive_loop():
+    """Kör full prediktiv pipeline automatiskt var 6:e timme."""
+    global _last_pipeline_run, _last_pipeline_result, _pipeline_run_count
+
+    # Vänta 2 min efter startup så att initiell data hinner laddas
+    await asyncio.sleep(120)
+
+    while True:
+        try:
+            logger.info("🤖 ═══════════════════════════════════════")
+            logger.info("🤖 AUTONOM PIPELINE STARTAR")
+            logger.info("🤖 ═══════════════════════════════════════")
+
+            pipeline_start = datetime.now()
+
+            # Kör samma pipeline som manuell endpoint
+            result = await _run_full_pipeline()
+
+            _last_pipeline_run = datetime.now()
+            _last_pipeline_result = result
+            _pipeline_run_count += 1
+
+            duration = result.get("duration_seconds", 0)
+            status = result.get("status", "UNKNOWN")
+            logger.info(f"🤖 AUTONOM PIPELINE KLAR: {status} ({duration}s) — Körning #{_pipeline_run_count}")
+
+            # ---- AUTO: Adversarial check på starka rekommendationer ----
+            recs = result.get("portfolio_recommendation", {}).get("recommendations", [])
+            strong_recs = [r for r in recs if abs(r.get("weighted_score", 0)) > 5]
+
+            for rec in strong_recs[:2]:
+                try:
+                    logger.info(f"🛡 Auto-adversarial: {rec.get('asset', '?')} ({rec.get('action', '?')})")
+                    challenge_prompt = adversarial.build_challenge_prompt(rec)
+                    challenge_resp = await call_llm("gemini", "DEVILS ADVOCATE. JSON.", challenge_prompt, temperature=0.4, max_tokens=2000)
+                    challenge_parsed = parse_llm_json(challenge_resp)
+                    if challenge_parsed:
+                        challenge_result = adversarial.parse_challenge(challenge_parsed, rec)
+                        verdict = "PROCEED" if challenge_result.should_proceed else "BLOCKED"
+                        logger.info(f"🛡 Adversarial verdict: {verdict} (conviction {challenge_result.original_conviction}→{challenge_result.adjusted_conviction})")
+                except Exception as e:
+                    logger.error(f"Adversarial failed: {e}")
+
+            # ---- AUTO: Confidence logging ----
+            for rec in recs[:5]:
+                try:
+                    score = abs(rec.get("weighted_score", 0))
+                    prob = min(score / 10, 0.95)  # Normalisera till 0-1
+                    confidence_cal.log_prediction(
+                        prediction_id=f"pipeline_{_pipeline_run_count}_{rec.get('asset', '')}",
+                        stated_prob=prob,
+                        source="pipeline",
+                        asset=rec.get("asset", "")
+                    )
+                except Exception:
+                    pass
+
+            # ---- AUTO: Meta-strategy logging ----
+            regime = "NEUTRAL"  # TODO: hämta från regime-detektor
+            for method_name in ["causal_chain", "lead_lag", "narrative"]:
+                try:
+                    quality = 0.5  # Default — uppdateras med verkliga utfall
+                    meta_strategy.log_method_performance(method_name, regime, quality)
+                except Exception:
+                    pass
+
+            # Varje måndag: uppdatera meta-vikter
+            if datetime.now().weekday() == 0:
+                try:
+                    meta_strategy.update_weights()
+                    logger.info("⚖ Meta-strategy weights updated")
+                except Exception:
+                    pass
+
+            # Varje måndag: compute confidence calibration
+            if datetime.now().weekday() == 0:
+                try:
+                    cal = confidence_cal.compute_calibration()
+                    brier = cal.get("brier_score", "?")
+                    logger.info(f"🎯 Confidence calibration: Brier={brier}")
+                except Exception:
+                    pass
+
+        except Exception as e:
+            logger.error(f"🤖 AUTONOM PIPELINE FEL: {e}", exc_info=True)
+
+        # Vänta till nästa körning
+        logger.info(f"🤖 Nästa automatiska körning om {PIPELINE_INTERVAL_HOURS}h")
+        await asyncio.sleep(PIPELINE_INTERVAL_HOURS * 3600)
+
+
+async def _run_full_pipeline() -> dict:
+    """Kör full prediktiv pipeline (delad av manuell endpoint + autonom loop)."""
+    pipeline_start = datetime.now()
+    steps_log = []
+
+    try:
+        # Samla data
+        news_summary = "\n".join([f"- {n.get('title', '')}" for n in (data_service.news or [])[:40]])
+        prices = data_service.prices or {}
+        recent_prices = {}
+        daily_returns_dict = {}
+        for asset_id, price_data in prices.items():
+            if isinstance(price_data, dict):
+                recent_prices[asset_id] = price_data.get("price", 0)
+                daily_returns_dict[asset_id] = price_data.get("change_pct", 0) / 100
+            elif isinstance(price_data, (int, float)):
+                recent_prices[asset_id] = price_data
+
+        returns_df = data_service.get_historical_returns()
+        historical_std = {}
+        if not returns_df.empty:
+            for col in returns_df.columns:
+                historical_std[col] = float(returns_df[col].std())
+
+        agent_outputs = {}
+        agent_scores_current = {}
+        for asset in data_service.assets:
+            asset_id = asset.get("id", "")
+            analysis = asset.get("analysis", {})
+            if analysis:
+                for agent_name in ["macro", "micro", "technical", "sentiment", "onchain"]:
+                    agent_data = analysis.get(agent_name, {})
+                    if agent_data:
+                        key = f"{agent_name}_{asset_id}"
+                        summary = agent_data.get("summary", agent_data.get("reasoning", ""))
+                        if summary:
+                            agent_outputs[key] = summary[:200]
+                        score = agent_data.get("score", 0)
+                        if agent_name not in agent_scores_current:
+                            agent_scores_current[agent_name] = {}
+                        agent_scores_current[agent_name][asset_id] = score
+
+        steps_log.append("data_collection_complete")
+
+        # Event detection
+        existing_chains = [c.trigger_event for c in predictor.causal_engine.active_chains]
+        detection = predictor.event_detector.run_full_detection(
+            news_summary=news_summary,
+            agent_outputs=agent_outputs,
+            recent_prices=recent_prices,
+            daily_returns=daily_returns_dict,
+            historical_std=historical_std,
+            agent_scores=agent_scores_current,
+            previous_agent_scores={},
+            existing_chains=existing_chains,
+        )
+        steps_log.append("event_detection_complete")
+
+        # AI-driven event analysis
+        ai_events = []
+        if detection.get("needs_ai_analysis") and detection.get("ai_analysis_prompt"):
+            ai_resp = await call_llm(
+                "gemini",
+                "Du är en marknadshändelse-analytiker. Svara ENBART med JSON.",
+                detection["ai_analysis_prompt"],
+                temperature=0.3, max_tokens=2000
+            )
+            parsed = parse_llm_json(ai_resp)
+            if parsed:
+                processed = predictor.process_ai_detection_response(parsed)
+                ai_events = processed.get("new_events", [])
+                steps_log.append("ai_event_analysis_complete")
+
+                for chain_req in processed.get("chains_to_build", [])[:3]:
+                    chain_resp = await call_llm(
+                        "gemini",
+                        "Du är en kausal analysexpert. Svara ENBART med JSON.",
+                        chain_req["chain_prompt"],
+                        temperature=0.4, max_tokens=2000
+                    )
+                    chain_parsed = parse_llm_json(chain_resp)
+                    if chain_parsed:
+                        predictor.process_ai_chain_response(chain_req["event_id"], chain_parsed)
+
+                for tree_req in processed.get("trees_to_build", [])[:2]:
+                    tree_resp = await call_llm(
+                        "gemini",
+                        "Du är en scenarioanalytiker. Svara ENBART med JSON.",
+                        tree_req["tree_prompt"],
+                        temperature=0.4, max_tokens=3000
+                    )
+                    tree_parsed = parse_llm_json(tree_resp)
+                    if tree_parsed:
+                        predictor.process_ai_tree_response(tree_req["event_id"], tree_parsed)
+
+                steps_log.append("ai_chains_trees_complete")
+
+        # Narrative update
+        narr_prompt = predictor.narrative.build_narrative_prompt(news_summary[:1000])
+        narr_resp = await call_llm(
+            "gemini",
+            "Du är en marknadsnarratologisk analytiker. Svara ENBART med JSON.",
+            narr_prompt, temperature=0.3, max_tokens=2000
+        )
+        narr_parsed = parse_llm_json(narr_resp)
+        if narr_parsed:
+            predictor.process_ai_narrative_response(narr_parsed)
+        steps_log.append("narrative_update_complete")
+
+        # Lead-lag
+        ll_signals = []
+        if not returns_df.empty:
+            ll_signals = predictor.lead_lag.get_actionable_signals(returns_df)
+        steps_log.append("lead_lag_complete")
+
+        # Aggregate
+        chain_impl = predictor.causal_engine.get_portfolio_implications()
+        convex = predictor.event_tree.get_all_convex_positions()
+        narr_signals = predictor.narrative.get_trading_signals()
+        narr_dashboard = predictor.narrative.get_dashboard()
+        expired = predictor.causal_engine.expire_old_chains()
+        steps_log.append("aggregation_complete")
+
+        portfolio_rec = predictor._generate_portfolio_recommendation(
+            chain_impl, convex, ll_signals, narr_signals
+        )
+
+        duration = (datetime.now() - pipeline_start).total_seconds()
+
+        return {
+            "status": "COMPLETE",
+            "duration_seconds": round(duration, 1),
+            "steps": steps_log,
+            "detection": {
+                "auto_events": detection["total_detected"],
+                "ai_events": len(ai_events),
+                "critical": detection["critical_count"],
+                "high": detection["high_count"],
+                "price_anomalies": len([e for e in detection.get("auto_detected_events", [])
+                                        if e.get("source") == "price_anomaly"]),
+                "agent_divergences": len([e for e in detection.get("auto_detected_events", [])
+                                          if e.get("source") == "agent_divergence"]),
+            },
+            "causal_chains": {
+                "active": len([c for c in predictor.causal_engine.active_chains if c.status == "ACTIVE"]),
+                "expired": expired,
+                "implications": dict(list(chain_impl.get("assets", {}).items())[:5]),
+            },
+            "event_trees": {"convex_positions": convex[:3]},
+            "lead_lag": {"actionable_signals": len(ll_signals), "top": ll_signals[:3]},
+            "narratives": narr_dashboard,
+            "portfolio_recommendation": portfolio_rec,
+        }
+
+    except Exception as e:
+        logger.error(f"Pipeline failed: {e}")
+        return {
+            "status": "ERROR", "error": str(e),
+            "steps_completed": steps_log,
+            "duration_seconds": round((datetime.now() - pipeline_start).total_seconds(), 1)
+        }
 
 
 app = FastAPI(
@@ -1437,197 +1777,28 @@ async def predictive_summary():
 
 @app.post("/api/predictive/run-pipeline")
 async def run_predictive_pipeline():
-    """
-    KÖR HELA PREDIKTIVA PIPELINE AUTONOMT.
-    Drar verklig data från data_service, skickar AI-prompts,
-    bygger kedjor/träd, och genererar portföljrekommendationer.
-    """
-    pipeline_start = datetime.now()
-    steps_log = []
+    """Manuell trigger av full prediktiv pipeline (samma logik som autonom loop)."""
+    global _last_pipeline_run, _last_pipeline_result, _pipeline_run_count
+    result = await _run_full_pipeline()
+    _last_pipeline_run = datetime.now()
+    _last_pipeline_result = result
+    _pipeline_run_count += 1
+    return result
 
-    try:
-        # ---- STEG 1: Hämta data från befintliga moduler ----
-        news_items = data_service.get_news()
-        news_summary = "\n".join([
-            f"- {n.get('title', '')} ({n.get('source', '')})"
-            for n in (news_items or [])[:20]
-        ]) or "Inga nyheter tillgängliga."
 
-        # Prisdata
-        prices = data_service.prices or {}
-        recent_prices = {}
-        daily_returns_dict = {}
-        for asset_id, price_data in prices.items():
-            if isinstance(price_data, dict):
-                p = price_data.get("price", 0)
-                chg = price_data.get("change_pct", 0)
-                recent_prices[asset_id] = p
-                daily_returns_dict[asset_id] = chg / 100 if chg else 0
-            elif isinstance(price_data, (int, float)):
-                recent_prices[asset_id] = price_data
-
-        # Historisk volatilitet för anomali-detektion
-        returns_df = data_service.get_historical_returns()
-        historical_std = {}
-        if not returns_df.empty:
-            for col in returns_df.columns:
-                historical_std[col] = float(returns_df[col].std())
-
-        # Agent-outputs (från senaste analyserna)
-        agent_outputs = {}
-        agent_scores_current = {}
-        agent_scores_previous = {}  # TODO: spara förra körningens scores
-        for asset in data_service.assets:
-            asset_id = asset.get("id", "")
-            analysis = asset.get("analysis", {})
-            if analysis:
-                for agent_name in ["macro", "micro", "technical", "sentiment", "onchain"]:
-                    agent_data = analysis.get(agent_name, {})
-                    if agent_data:
-                        key = f"{agent_name}_{asset_id}"
-                        summary = agent_data.get("summary", agent_data.get("reasoning", ""))
-                        if summary:
-                            agent_outputs[key] = summary[:200]
-                        score = agent_data.get("score", 0)
-                        if agent_name not in agent_scores_current:
-                            agent_scores_current[agent_name] = {}
-                        agent_scores_current[agent_name][asset_id] = score
-
-        steps_log.append("data_collection_complete")
-
-        # ---- STEG 2: Kör EventDetector (autonom detektion) ----
-        existing_chains = [c.trigger_event for c in predictor.causal_engine.active_chains]
-
-        detection = predictor.event_detector.run_full_detection(
-            news_summary=news_summary,
-            agent_outputs=agent_outputs,
-            recent_prices=recent_prices,
-            daily_returns=daily_returns_dict,
-            historical_std=historical_std,
-            current_agent_scores=agent_scores_current,
-            previous_agent_scores=agent_scores_previous,
-            existing_chain_titles=existing_chains
-        )
-        steps_log.append("event_detection_complete")
-
-        # ---- STEG 3: AI-baserad händelsedetektion ----
-        ai_events = []
-        ai_detection_prompt = detection.get("ai_detection_prompt", "")
-        if ai_detection_prompt:
-            ai_resp = await call_llm(
-                "gemini",
-                "Du är en händelsedetekterings-AI. Svara ENBART med JSON.",
-                ai_detection_prompt,
-                temperature=0.3, max_tokens=2000
-            )
-            parsed = parse_llm_json(ai_resp)
-            if parsed:
-                processed = predictor.process_ai_detection_response(parsed)
-                ai_events = processed.get("events", [])
-
-                # Bygg kausala kedjor för CRITICAL/HIGH händelser
-                for chain_req in processed.get("chains_to_build", [])[:3]:
-                    chain_resp = await call_llm(
-                        "gemini",
-                        "Du är en kausal analysexpert. Svara ENBART med JSON.",
-                        chain_req["chain_prompt"],
-                        temperature=0.4, max_tokens=2000
-                    )
-                    chain_parsed = parse_llm_json(chain_resp)
-                    if chain_parsed:
-                        predictor.process_ai_chain_response(
-                            chain_req["event_id"], chain_parsed
-                        )
-
-                # Bygg event trees för CRITICAL händelser
-                for tree_req in processed.get("trees_to_build", [])[:2]:
-                    tree_resp = await call_llm(
-                        "gemini",
-                        "Du är en scenarioanalytiker. Svara ENBART med JSON.",
-                        tree_req["tree_prompt"],
-                        temperature=0.4, max_tokens=3000
-                    )
-                    tree_parsed = parse_llm_json(tree_resp)
-                    if tree_parsed:
-                        predictor.process_ai_tree_response(
-                            tree_req["event_id"], tree_parsed
-                        )
-
-                steps_log.append("ai_chains_trees_complete")
-
-        # ---- STEG 4: Uppdatera narrativ via AI ----
-        narr_prompt = predictor.narrative.build_narrative_prompt(news_summary[:1000])
-        narr_resp = await call_llm(
-            "gemini",
-            "Du är en marknadsnarratologisk analytiker. Svara ENBART med JSON.",
-            narr_prompt,
-            temperature=0.3, max_tokens=2000
-        )
-        narr_parsed = parse_llm_json(narr_resp)
-        if narr_parsed:
-            predictor.process_ai_narrative_response(narr_parsed)
-        steps_log.append("narrative_update_complete")
-
-        # ---- STEG 5: Lead-lag signaler ----
-        ll_signals = []
-        if not returns_df.empty:
-            ll_signals = predictor.lead_lag.get_actionable_signals(returns_df)
-        steps_log.append("lead_lag_complete")
-
-        # ---- STEG 6: Aggregera & rekommendera ----
-        chain_impl = predictor.causal_engine.get_portfolio_implications()
-        convex = predictor.event_tree.get_all_convex_positions()
-        narr_signals = predictor.narrative.get_trading_signals()
-        narr_dashboard = predictor.narrative.get_dashboard()
-
-        expired = predictor.causal_engine.expire_old_chains()
-        steps_log.append("aggregation_complete")
-
-        portfolio_rec = predictor._generate_portfolio_recommendation(
-            chain_impl, convex, ll_signals, narr_signals
-        )
-
-        duration = (datetime.now() - pipeline_start).total_seconds()
-
-        return {
-            "status": "COMPLETE",
-            "duration_seconds": round(duration, 1),
-            "steps": steps_log,
-            "detection": {
-                "auto_events": detection["total_detected"],
-                "ai_events": len(ai_events),
-                "critical": detection["critical_count"],
-                "high": detection["high_count"],
-                "price_anomalies": len([e for e in detection.get("auto_detected_events", [])
-                                        if e.get("source") == "price_anomaly"]),
-                "agent_divergences": len([e for e in detection.get("auto_detected_events", [])
-                                          if e.get("source") == "agent_divergence"]),
-            },
-            "causal_chains": {
-                "active": len([c for c in predictor.causal_engine.active_chains
-                               if c.status == "ACTIVE"]),
-                "expired": expired,
-                "implications": dict(list(chain_impl.get("assets", {}).items())[:5]),
-            },
-            "event_trees": {
-                "convex_positions": convex[:3],
-            },
-            "lead_lag": {
-                "actionable_signals": len(ll_signals),
-                "top": ll_signals[:3],
-            },
-            "narratives": narr_dashboard,
-            "portfolio_recommendation": portfolio_rec,
-        }
-
-    except Exception as e:
-        logger.error(f"Pipeline failed: {e}")
-        return {
-            "status": "ERROR",
-            "error": str(e),
-            "steps_completed": steps_log,
-            "duration_seconds": round((datetime.now() - pipeline_start).total_seconds(), 1)
-        }
+@app.get("/api/predictive/auto-status")
+async def get_auto_pipeline_status():
+    """Status för den autonoma bakgrundspipelinen."""
+    return {
+        "last_run": _last_pipeline_run.isoformat() if _last_pipeline_run else None,
+        "run_count": _pipeline_run_count,
+        "last_status": _last_pipeline_result.get("status") if _last_pipeline_result else None,
+        "last_duration": _last_pipeline_result.get("duration_seconds") if _last_pipeline_result else None,
+        "interval_hours": PIPELINE_INTERVAL_HOURS,
+        "next_run_approx": (_last_pipeline_run + timedelta(hours=PIPELINE_INTERVAL_HOURS)).isoformat() if _last_pipeline_run else "Om ~2 min (initial delay)",
+        "event_detection_refreshes": _refresh_count,
+        "mode": "AUTONOMOUS",
+    }
 
 
 @app.get("/api/predictive/event-log")

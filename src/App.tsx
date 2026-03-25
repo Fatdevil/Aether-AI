@@ -11,6 +11,7 @@ import SectorsPage from './pages/SectorsPage';
 import RegionsPage from './pages/RegionsPage';
 import PerformancePage from './pages/PerformancePage';
 import BacktestPage from './pages/BacktestPage';
+import PredictivePage from './pages/PredictivePage';
 
 import GlobalOverviewPage from './pages/GlobalOverviewPage';
 import './index.css';
@@ -39,6 +40,7 @@ function AppContent() {
         <Route path="/news" element={<NewsPage news={liveData.news} />} />
         <Route path="/performance" element={<PerformancePage />} />
         <Route path="/backtest" element={<BacktestPage />} />
+        <Route path="/predict" element={<PredictivePage />} />
         <Route path="/global" element={<GlobalOverviewPage />} />
       </Routes>
       <MobileNav />

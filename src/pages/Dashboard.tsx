@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { Activity, BarChart3 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Activity, BarChart3, Brain, ChevronRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import type { Asset } from '../types';
 import { getScoreColor } from '../types';
 import AssetCard from '../components/AssetCard';
@@ -7,6 +8,77 @@ import AssetDetail from '../components/AssetDetail';
 import { CalendarWidget } from '../components/IntelligenceWidgets';
 import CorrelationHeatmap from '../components/CorrelationHeatmap';
 import TrendingWidget from '../components/TrendingWidget';
+import { api } from '../api/client';
+
+// Predictive Pulse Widget for Dashboard
+function PredictivePulse() {
+  const [health, setHealth] = useState<any>(null);
+  const [events, setEvents] = useState<any>(null);
+
+  useEffect(() => {
+    api.getSystemHealth().then(setHealth).catch(() => {});
+    api.getEventLog().then(setEvents).catch(() => {});
+  }, []);
+
+  const statusColor = health?.status === 'HEALTHY' ? '#00c851' : health?.status === 'WARNING' ? '#ffa502' : '#ff4757';
+  const statusEmoji = health?.status === 'HEALTHY' ? '🟢' : health?.status === 'WARNING' ? '🟡' : '🔴';
+
+  return (
+    <Link to="/predict" style={{ textDecoration: 'none', color: 'inherit' }}>
+      <div className="glass-panel" style={{
+        padding: '1.25rem', cursor: 'pointer',
+        transition: 'all 0.2s ease',
+        background: 'linear-gradient(135deg, rgba(102,126,234,0.04) 0%, rgba(118,75,162,0.04) 100%)',
+        borderLeft: '3px solid #667eea',
+      }}
+      onMouseEnter={e => (e.currentTarget.style.background = 'linear-gradient(135deg, rgba(102,126,234,0.08) 0%, rgba(118,75,162,0.08) 100%)')}
+      onMouseLeave={e => (e.currentTarget.style.background = 'linear-gradient(135deg, rgba(102,126,234,0.04) 0%, rgba(118,75,162,0.04) 100%)')}
+      >
+        <h4 style={{ margin: '0 0 0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1rem' }}>
+          <Brain size={18} color="#a78bfa" />
+          Predictive Intelligence
+          <ChevronRight size={14} color="var(--text-tertiary)" style={{ marginLeft: 'auto' }} />
+        </h4>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          {/* System Health */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>System</span>
+            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: statusColor }}>
+              {health ? `${statusEmoji} ${health.status}` : '...'}
+            </span>
+          </div>
+
+          {/* Events */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Events (30d)</span>
+            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+              {events?.last_30_days ?? '—'}
+            </span>
+          </div>
+
+          {/* Critical count */}
+          {events?.by_severity?.CRITICAL > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Kritiska</span>
+              <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#ff4757' }}>
+                🔴 {events.by_severity.CRITICAL}
+              </span>
+            </div>
+          )}
+
+          {/* CTA */}
+          <div style={{
+            marginTop: '0.25rem', fontSize: '0.7rem', color: '#667eea',
+            display: 'flex', alignItems: 'center', gap: '0.3rem',
+          }}>
+            Öppna prediktiv analys →
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+}
 
 interface DashboardProps {
   assets: Asset[];
@@ -54,9 +126,10 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
 
       {/* Intelligence Widgets */}
       <div className="animate-fade-in" style={{ marginBottom: '2rem', animationDelay: '0.05s' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr)', gap: '1rem', marginBottom: '0rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr)', gap: '1rem', marginBottom: '0rem' }}>
           <CalendarWidget />
           <TrendingWidget />
+          <PredictivePulse />
           <CorrelationHeatmap />
         </div>
       </div>
