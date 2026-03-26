@@ -151,6 +151,15 @@ class AnalysisStore:
             CREATE INDEX IF NOT EXISTS idx_supervisor_summaries_ts ON supervisor_summaries(timestamp);
         """)
         conn.commit()
+
+        # Migration: add regime column if missing
+        try:
+            conn.execute("ALTER TABLE analyses ADD COLUMN regime TEXT DEFAULT 'unknown'")
+            conn.commit()
+            logger.info("🔄 Added 'regime' column to analyses table")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
         conn.close()
         logger.info(f"📦 Analysis store initialized: {self.db_path}")
 
@@ -160,6 +169,15 @@ class AnalysisStore:
         """Store a complete asset analysis. Returns analysis ID."""
         analysis_id = str(uuid.uuid4())[:12]
         now = datetime.now(timezone.utc).isoformat()
+
+        # Get current regime for regime-conditional accuracy tracking
+        current_regime = "unknown"
+        try:
+            from regime_detector import regime_detector
+            regime_data = regime_detector.detect_regime()
+            current_regime = regime_data.get("regime", "unknown") if regime_data else "unknown"
+        except Exception:
+            pass
 
         agent_scores = {}
         for agent in ["macro", "micro", "sentiment", "tech"]:
@@ -178,8 +196,8 @@ class AnalysisStore:
             INSERT INTO analyses (id, asset_id, asset_name, category, timestamp,
                 price_at_analysis, change_pct_at_analysis, final_score, recommendation,
                 trend, supervisor_text, supervisor_confidence, agent_scores,
-                providers_used, risk_flags, analysis_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'asset')
+                providers_used, risk_flags, analysis_type, regime)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'asset', ?)
         """, (
             analysis_id, asset_id, asset_name, category, now,
             price_data.get("price", 0), price_data.get("change_pct", 0),
@@ -190,6 +208,7 @@ class AnalysisStore:
             json.dumps(agent_scores),
             json.dumps(analysis.get("providersUsed", [])),
             json.dumps(analysis.get("riskFlags", [])),
+            current_regime,
         ))
 
         # Create price snapshot entry (to be filled later)

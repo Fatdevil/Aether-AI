@@ -260,7 +260,7 @@ class Evaluator:
             conn.close()
 
     def _update_agent_accuracy(self) -> int:
-        """Calculate and store aggregated accuracy per agent."""
+        """Calculate and store aggregated accuracy per agent, including regime-split."""
         from analysis_store import DB_PATH
         import sqlite3
 
@@ -301,7 +301,7 @@ class Evaluator:
                         "total": row["total"],
                         "correct": row["correct"] or 0,
                         "bias": round(bias, 2),
-                        "calibration_error": round(row["avg_mag_error"], 4) if row["avg_mag_error"] else 0,  # Brier score
+                        "calibration_error": round(row["avg_mag_error"], 4) if row["avg_mag_error"] else 0,
                     })
                     updated += 1
 
@@ -330,7 +330,55 @@ class Evaluator:
                 })
                 updated += 1
 
+        # FIX 1: Regime-conditional accuracy
+        self._update_regime_accuracy()
+
         return updated
+
+    def _update_regime_accuracy(self):
+        """Calculate accuracy per agent per regime (risk-on, risk-off, etc.)."""
+        from analysis_store import DB_PATH
+        import sqlite3
+
+        regimes = ["risk-on", "risk-off", "inflation", "deflation", "transition"]
+        agents = ["macro", "micro", "sentiment", "tech", "supervisor"]
+
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.row_factory = sqlite3.Row
+
+        self._regime_accuracy = {}
+
+        for agent in agents:
+            self._regime_accuracy[agent] = {}
+            timeframe = "24h" if agent == "supervisor" else f"24h_{agent}"
+
+            for regime in regimes:
+                row = conn.execute("""
+                    SELECT COUNT(*) as total, SUM(e.direction_correct) as correct,
+                           AVG(e.direction_correct) as accuracy
+                    FROM evaluations e
+                    JOIN analyses a ON e.analysis_id = a.id
+                    WHERE e.timeframe = ?
+                    AND a.regime = ?
+                    AND e.direction_correct >= 0
+                """, (timeframe, regime)).fetchone()
+
+                if row and row["total"] and row["total"] >= 5:
+                    self._regime_accuracy[agent][regime] = {
+                        "accuracy": round(row["accuracy"], 3) if row["accuracy"] else 0,
+                        "total": row["total"],
+                        "correct": row["correct"] or 0,
+                    }
+
+        conn.close()
+
+    def get_regime_accuracy(self, agent: str = None) -> dict:
+        """Get regime-conditional accuracy for one or all agents."""
+        if not hasattr(self, '_regime_accuracy'):
+            self._update_regime_accuracy()
+        if agent:
+            return self._regime_accuracy.get(agent, {})
+        return self._regime_accuracy
 
     def get_performance_report(self) -> dict:
         """Generate complete performance report for the API/frontend."""

@@ -22,6 +22,7 @@ from onchain_data import fetch_onchain_data, format_onchain_for_prompt, get_cach
 from meta_supervisor import should_get_second_opinion, aggregate_results, get_ensemble_status
 from supervisor_context import SupervisorContextBuilder
 from analysis_store import store as analysis_store
+from evaluator import evaluator
 
 logger = logging.getLogger("aether.ai")
 
@@ -145,10 +146,10 @@ async def analyze_asset(asset_id: str, price_data: dict, news_items: list, categ
     except Exception:
         domain_ctx = ""
 
-    # FIX 2B: Build accuracy context per agent (inject historical performance)
+    # FIX 2B + FIX 1: Build accuracy context per agent (with regime split)
     accuracy_ctx = ""
     try:
-        acc_parts = ["HISTORISK PRICKSÄKERHET (de senaste 30 dagarna):"]
+        acc_parts = ["HISTORISK PRICKSÄKERHET (senaste 30 dagarna):"]
         for agent_name_key in ["macro", "micro", "sentiment", "tech"]:
             acc_data = analysis_store.get_agent_accuracy(agent_name_key, "30d")
             if acc_data:
@@ -156,7 +157,26 @@ async def analyze_asset(asset_id: str, price_data: dict, news_items: list, categ
                 total = a.get("total_predictions", 0)
                 if total > 5:
                     acc_pct = round(a.get("accuracy_direction", 0) * 100)
-                    acc_parts.append(f"  {agent_name_key}: {acc_pct}% korrekt ({total} prediktioner)")
+                    acc_parts.append(f"  {agent_name_key}: {acc_pct}% korrekt ({total} pred)")
+
+        # FIX 1: Add regime-conditional accuracy
+        try:
+            current_regime_name = regime.get("regime", "unknown") if regime else "unknown"
+            regime_acc = evaluator.get_regime_accuracy()
+            if regime_acc and current_regime_name != "unknown":
+                regime_parts = [f"I NUVARANDE REGIM ({current_regime_name}):"]
+                for agent_name_key in ["macro", "micro", "sentiment", "tech"]:
+                    ra = regime_acc.get(agent_name_key, {}).get(current_regime_name, {})
+                    if ra.get("total", 0) >= 5:
+                        regime_parts.append(
+                            f"  {agent_name_key}: {round(ra['accuracy'] * 100)}% "
+                            f"({ra['total']} pred i {current_regime_name})"
+                        )
+                if len(regime_parts) > 1:
+                    acc_parts.extend(regime_parts)
+        except Exception:
+            pass
+
         if len(acc_parts) > 1:
             accuracy_ctx = "\n".join(acc_parts)
     except Exception:
@@ -322,6 +342,34 @@ async def analyze_asset(asset_id: str, price_data: dict, news_items: list, categ
     final_score = merged.get("finalScore", final_score)
     risk_flags = merged.get("risk_flags", supervisor_result.get("risk_flags", []))
     supervisor_confidence = merged.get("supervisorConfidence", supervisor_result.get("confidence", 0.5))
+
+    # ===== FIX 2: Volatility-normalized scores =====
+    # A +5 on BTC (3% daily vol) ≠ +5 on EUR/USD (0.2% vol)
+    # Normalize so scores reflect true signal strength, not asset volatility
+    try:
+        indicators = price_data.get("indicators", {})
+        atr_pct = indicators.get("atr_pct", 0)
+
+        # Baseline ATR per asset class (what's "normal" volatility)
+        BASELINE_ATR = {
+            "btc": 3.0, "gold": 0.8, "silver": 1.5, "oil": 1.8,
+            "sp500": 0.8, "global-equity": 0.7, "eurusd": 0.3, "us10y": 0.5,
+        }
+        baseline = BASELINE_ATR.get(asset_id, 1.0)
+
+        if atr_pct and atr_pct > 0 and baseline > 0:
+            vol_ratio = atr_pct / baseline
+            # If current vol is 2x normal → score should be dampened (noisy market)
+            # If current vol is 0.5x normal → score is MORE meaningful
+            # Clamp adjustment between 0.6x and 1.3x
+            vol_adjustment = max(0.6, min(1.3, 1.0 / (vol_ratio ** 0.3)))
+            if abs(vol_adjustment - 1.0) > 0.05:
+                original_score = final_score
+                final_score = final_score * vol_adjustment
+                logger.info(f"  📊 {asset_name}: Vol-normalized {original_score:+.1f}→{final_score:+.1f} "
+                            f"(ATR={atr_pct:.1f}%, baseline={baseline}%, adj={vol_adjustment:.2f})")
+    except Exception as e:
+        logger.debug(f"Vol normalization skipped for {asset_name}: {e}")
 
     # ===== FIX 1D: Calendar confidence_multiplier =====
     # Reduce conviction before imminent high-impact events (FOMC, NFP, CPI)
@@ -535,6 +583,32 @@ def generate_portfolio(assets_analysis: dict) -> dict:
             "color": colors.get(asset_id, "#888"),
             "score": score,
         })
+
+    # ===== FIX 3: Correlation-adjusted weights =====
+    # If two correlated assets both get "buy", the weaker one is penalized
+    # to avoid over-concentration in correlated bets
+    try:
+        correlations = correlation_engine.get_correlation_matrix()
+        if correlations:
+            buy_allocs = [a for a in allocations if a["action"] == "buy" and a["weight"] > 0]
+            for i, a1 in enumerate(buy_allocs):
+                for j, a2 in enumerate(buy_allocs):
+                    if j <= i:
+                        continue
+                    # Get correlation between the two assets
+                    corr = correlations.get(a1["assetId"], {}).get(a2["assetId"], 0)
+                    if abs(corr) > 0.5:
+                        # High correlation — penalize the weaker signal
+                        penalty = 1.0 - (abs(corr) - 0.5)  # 0.5 corr → 1.0x, 1.0 corr → 0.5x
+                        penalty = max(0.5, min(1.0, penalty))
+                        if abs(a1["score"]) < abs(a2["score"]):
+                            a1["weight"] = max(0, round(a1["weight"] * penalty))
+                        else:
+                            a2["weight"] = max(0, round(a2["weight"] * penalty))
+                        logger.info(f"  🔗 Correlation penalty: {a1['assetId']}↔{a2['assetId']} "
+                                    f"(corr={corr:.2f}, penalty={penalty:.2f})")
+    except Exception as e:
+        logger.debug(f"Correlation adjustment skipped: {e}")
 
     total_weight = sum(a["weight"] for a in allocations)
     if total_weight > 0:
