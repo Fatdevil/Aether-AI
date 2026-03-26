@@ -167,6 +167,22 @@ class DataService:
                 except Exception as e:
                     logger.warning(f"Failed to store analysis for {asset_id}: {e}")
 
+                # FIX 3A: Log prediction + apply confidence calibration
+                try:
+                    from predictive.confidence_calibrator import ConfidenceCalibrator
+                    calibrator = ConfidenceCalibrator()
+                    # Log this prediction for future calibration
+                    raw_conf = analysis.get("supervisorConfidence", 0.5)
+                    pred_id = f"{asset_id}_{datetime.now().strftime('%Y%m%d_%H%M')}"
+                    calibrator.log_prediction(pred_id, raw_conf, "supervisor", asset=asset_id)
+                    # Apply calibration to displayed confidence
+                    calibrated_conf = calibrator.adjust_probability(raw_conf)
+                    if abs(calibrated_conf - raw_conf) > 0.02:
+                        asset_obj["supervisorConfidence"] = round(calibrated_conf, 3)
+                        analysis["supervisorConfidence"] = round(calibrated_conf, 3)
+                except Exception:
+                    pass
+
             self.assets.sort(key=lambda x: abs(x["finalScore"]), reverse=True)
 
             # 4. Sector analysis
@@ -202,6 +218,17 @@ class DataService:
                     logger.info(f"  📈 Backfilled {eval_results['backfilled']} price snapshots")
                 if eval_results["agents_updated"] > 0:
                     logger.info(f"  🧠 Updated {eval_results['agents_updated']} agent accuracy stats")
+
+                # FIX 1C: Update MetaStrategy weights after evaluation
+                # This closes the self-improvement loop — method weights adjust based on real performance
+                try:
+                    from predictive.meta_strategy import MetaStrategySelector
+                    meta = MetaStrategySelector()
+                    meta.update_weights()
+                    logger.info("  🔄 MetaStrategy weights updated from evaluation results")
+                except Exception as me:
+                    logger.warning(f"  MetaStrategy update skipped: {me}")
+
             except Exception as e:
                 logger.warning(f"Evaluation error: {e}")
             scheduler.mark_refreshed("evaluation")
@@ -385,11 +412,15 @@ Vad bör man göra de närmaste 1-2 veckorna?
 7. Om det finns LEAD-LAG-signaler — förklara vad de förutspår.
 8. Om det finns en FÖREGÅENDE SUPERVISOR-SUMMERING — referera till den naturligt.
 9. Avsluta ALLTID med en tydlig "bottom line" — vad ska en investerare göra?
+10. SJÄLVUTVÄRDERING: Om du har tillgång till din förra analys, börja ALLTID med
+    en ärlig utvärdering: "Förra gången skrev jag X. Det stämde/stämde inte eftersom Y."
+    Detta bygger förtroende och visar att systemet lär sig.
 
 VIKTIGT:
 - Skriv INTE "Sammanfattning:" eller "Slutsats:" — skriv som ett personligt brev.
 - Var SPECIFIK med siffror och tillgångar.
 - Undvik att bara lista saker — skapa ett NARRATIV med flöde.
+- Om din förra analys var FEL — VAR ÄRLIG. Det bygger mer förtroende än att vara rätt.
 - BARA texten, inga JSON eller metadata."""
 
         try:

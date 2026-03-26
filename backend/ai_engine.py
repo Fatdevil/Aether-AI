@@ -145,12 +145,59 @@ async def analyze_asset(asset_id: str, price_data: dict, news_items: list, categ
     except Exception:
         domain_ctx = ""
 
+    # FIX 2B: Build accuracy context per agent (inject historical performance)
+    accuracy_ctx = ""
+    try:
+        acc_parts = ["HISTORISK PRICKSÄKERHET (de senaste 30 dagarna):"]
+        for agent_name_key in ["macro", "micro", "sentiment", "tech"]:
+            acc_data = analysis_store.get_agent_accuracy(agent_name_key, "30d")
+            if acc_data:
+                a = acc_data[0] if isinstance(acc_data, list) else acc_data
+                total = a.get("total_predictions", 0)
+                if total > 5:
+                    acc_pct = round(a.get("accuracy_direction", 0) * 100)
+                    acc_parts.append(f"  {agent_name_key}: {acc_pct}% korrekt ({total} prediktioner)")
+        if len(acc_parts) > 1:
+            accuracy_ctx = "\n".join(acc_parts)
+    except Exception:
+        pass
+
+    # FIX 2C: Build lead-lag context for per-agent injection
+    lead_lag_ctx = ""
+    try:
+        from predictive.lead_lag import LeadLagDetector
+        ll = LeadLagDetector()
+        # Get returns_df if available
+        returns_df = None
+        try:
+            from data_service import data_service
+            returns_df = data_service.get_historical_returns() if data_service else None
+        except Exception:
+            pass
+        if returns_df is not None:
+            signals = ll.get_actionable_signals(returns_df)
+            relevant = [s for s in signals if s.get("follower", "").lower() == asset_id.lower() or
+                        s.get("leader", "").lower() == asset_id.lower()]
+            if relevant:
+                ll_parts = ["LEAD-LAG SIGNALER (cross-asset prediktion):"]
+                for sig in relevant[:3]:
+                    ll_parts.append(
+                        f"  {sig['leader']} → {sig['follower']}: "
+                        f"{sig.get('action', '?')} (styrka: {sig.get('confidence', 0):.0%}, "
+                        f"lag: {sig.get('lag_days', '?')} dagar)"
+                    )
+                lead_lag_ctx = "\n".join(ll_parts)
+    except Exception:
+        pass
+
     def build_context(agent_name: str) -> str:
         parts = [
             perf_contexts.get(agent_name, ""),
             calendar_ctx,
             corr_ctx,
             regime_contexts.get(agent_name, ""),
+            accuracy_ctx,    # FIX 2B: Agent accuracy history
+            lead_lag_ctx,    # FIX 2C: Lead-lag cross-asset signals
         ]
         # On-chain data only for micro/tech agents (most relevant)
         if onchain_ctx and agent_name in ("micro", "tech"):
@@ -273,6 +320,79 @@ async def analyze_asset(asset_id: str, price_data: dict, news_items: list, categ
     )
 
     final_score = merged.get("finalScore", final_score)
+    risk_flags = merged.get("risk_flags", supervisor_result.get("risk_flags", []))
+    supervisor_confidence = merged.get("supervisorConfidence", supervisor_result.get("confidence", 0.5))
+
+    # ===== FIX 1D: Calendar confidence_multiplier =====
+    # Reduce conviction before imminent high-impact events (FOMC, NFP, CPI)
+    if should_reduce and conf_multiplier < 1.0:
+        original_score = final_score
+        final_score = final_score * conf_multiplier
+        supervisor_confidence *= conf_multiplier
+        risk_flags.append(f"⚠️ Score reducerat {original_score:+.1f}→{final_score:+.1f} pga kommande event (×{conf_multiplier:.2f})")
+        logger.info(f"  📅 {asset_name}: Calendar reduction applied (×{conf_multiplier:.2f})")
+
+    # ===== FIX 1B: Adversarial Agent (bias-kontroll) =====
+    # Only challenge strong convictions (saves API calls on weak signals)
+    adversarial_data = {}
+    if abs(final_score) >= 5.0 and use_llm_supervisor:
+        try:
+            from predictive.adversarial_agent import AdversarialAgent
+            from llm_provider import call_llm_tiered, parse_llm_json
+            adversarial = AdversarialAgent()
+
+            rec_for_challenge = {
+                "asset": asset_name,
+                "score": round(final_score, 1),
+                "recommendation": merged.get("recommendation", supervisor_result.get("recommendation", "Neutral")),
+                "confidence": round(supervisor_confidence, 2),
+                "reasoning": supervisor_result.get("supervisorText", "")[:300],
+                "agents": {k: round(v["score"], 1) for k, v in agent_results.items()},
+            }
+
+            challenge_prompt = adversarial.build_challenge_prompt(
+                rec_for_challenge,
+                market_context=predict_context_str[:500] if predict_context_str else "",
+            )
+
+            challenge_text, provider = await call_llm_tiered(
+                tier=1,  # Use Flash for cost efficiency
+                system_prompt="Du är en Devils Advocate-analytiker. Svara BARA med JSON.",
+                user_prompt=challenge_prompt,
+                temperature=0.4,
+                max_tokens=800,
+            )
+
+            if challenge_text:
+                challenge_json = parse_llm_json(challenge_text)
+                if challenge_json:
+                    challenge = adversarial.parse_challenge(challenge_json, rec_for_challenge)
+
+                    # Apply conviction adjustment
+                    conviction_ratio = challenge.adjusted_conviction / max(challenge.original_conviction, 0.01)
+                    conviction_ratio = max(0.3, min(1.0, conviction_ratio))  # Clamp between 0.3x and 1.0x
+                    original_score = final_score
+                    final_score = final_score * conviction_ratio
+
+                    # Add red flags to result
+                    risk_flags.extend(challenge.red_flags)
+
+                    adversarial_data = {
+                        "active": True,
+                        "conviction_ratio": round(conviction_ratio, 2),
+                        "original_score": round(original_score, 1),
+                        "adjusted_score": round(final_score, 1),
+                        "should_proceed": challenge.should_proceed,
+                        "weakest_assumption": challenge.weakest_assumption,
+                        "counter_narrative": challenge.counter_narrative,
+                        "challenges_count": len(challenge.challenges),
+                        "red_flags": challenge.red_flags,
+                        "provider": provider,
+                    }
+                    logger.info(f"  😈 {asset_name}: Adversarial {original_score:+.1f}→{final_score:+.1f} "
+                                f"(×{conviction_ratio:.2f}, {'PROCEED' if challenge.should_proceed else 'BLOCKED'})")
+        except Exception as e:
+            logger.warning(f"  ⚠️ Adversarial failed for {asset_name}: {e}")
 
     # Determine trend
     if final_score >= 3:
@@ -321,9 +441,9 @@ async def analyze_asset(asset_id: str, price_data: dict, news_items: list, categ
         "finalScore": final_score,
         "trend": trend,
         "supervisorText": merged.get("supervisorText", supervisor_result["supervisorText"]),
-        "supervisorConfidence": merged.get("supervisorConfidence", supervisor_result.get("confidence", 0.5)),
+        "supervisorConfidence": round(supervisor_confidence, 3),
         "supervisorWeights": supervisor_result.get("weights", {}),
-        "riskFlags": merged.get("risk_flags", supervisor_result.get("risk_flags", [])),
+        "riskFlags": risk_flags,
         "recommendation": merged.get("recommendation", supervisor_result.get("recommendation", "Neutral")),
         "scenarioData": scenarios["data"],
         "scenarioProbabilities": scenarios["probabilities"],
@@ -331,6 +451,7 @@ async def analyze_asset(asset_id: str, price_data: dict, news_items: list, categ
             r.get("provider_used", "rule_based") for r in agent_results.values()
         )) + [supervisor_result.get("provider_used", "rule_based")],
         "ensemble": merged.get("ensemble", {"active": False, "reason": trigger_reason}),
+        "adversarial": adversarial_data,
     }
 
 
