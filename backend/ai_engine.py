@@ -20,6 +20,8 @@ from regime_detector import regime_detector
 from trade_signals import signal_generator
 from onchain_data import fetch_onchain_data, format_onchain_for_prompt, get_cached_onchain
 from meta_supervisor import should_get_second_opinion, aggregate_results, get_ensemble_status
+from supervisor_context import SupervisorContextBuilder
+from analysis_store import store as analysis_store
 
 logger = logging.getLogger("aether.ai")
 
@@ -185,16 +187,29 @@ async def analyze_asset(asset_id: str, price_data: dict, news_items: list, categ
         "tech": tech_result,
     }
 
+    # Build predict context for Supervisor V2
+    try:
+        context_builder = SupervisorContextBuilder(analysis_store=analysis_store)
+        predict_ctx = context_builder.build_full_context(
+            asset_id, asset_name, category, price_data, agent_results
+        )
+        predict_context_str = predict_ctx.get("formatted_prompt", "")
+        logger.info(f"  📋 {asset_name}: Predict context built ({len(predict_context_str)} chars)")
+    except Exception as e:
+        logger.warning(f"Predict context failed for {asset_name}: {e}")
+        predict_context_str = ""
+
     # Smart routing: check if asset warrants LLM supervisor
     signal_score = _quick_signal_score(price_data)
     use_llm_supervisor = signal_score >= SIGNAL_THRESHOLD
 
     if use_llm_supervisor:
-        # Full LLM supervisor evaluation
+        # Full LLM supervisor evaluation with predict context
         supervisor_result = await supervisor_agent.evaluate(
-            asset_id, asset_name, category, price_data, agent_results
+            asset_id, asset_name, category, price_data, agent_results,
+            predict_context=predict_context_str,
         )
-        logger.info(f"  🧠 {asset_name}: LLM supervisor (signal: {signal_score:.1f})")
+        logger.info(f"  🧠 {asset_name}: LLM supervisor V2 (signal: {signal_score:.1f})")
     else:
         # Rule-based supervisor with dynamic weights (saves API call)
         dyn_weights = get_dynamic_weights()

@@ -129,12 +129,26 @@ class AnalysisStore:
                 evaluation_notes TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS supervisor_summaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                overall_score REAL,
+                regime TEXT,
+                mood TEXT,
+                summary_text TEXT,
+                key_changes TEXT,
+                accuracy_last_7d REAL,
+                active_events_count INTEGER,
+                assets_analyzed INTEGER
+            );
+
             -- Indexes
             CREATE INDEX IF NOT EXISTS idx_analyses_asset ON analyses(asset_id, timestamp);
             CREATE INDEX IF NOT EXISTS idx_analyses_timestamp ON analyses(timestamp);
             CREATE INDEX IF NOT EXISTS idx_snapshots_analysis ON price_snapshots(analysis_id);
             CREATE INDEX IF NOT EXISTS idx_evaluations_asset ON evaluations(asset_id, timeframe);
             CREATE INDEX IF NOT EXISTS idx_agent_accuracy_agent ON agent_accuracy(agent_name, period);
+            CREATE INDEX IF NOT EXISTS idx_supervisor_summaries_ts ON supervisor_summaries(timestamp);
         """)
         conn.commit()
         conn.close()
@@ -584,6 +598,62 @@ class AnalysisStore:
         """, (limit,)).fetchall()
         conn.close()
         return {"best": [dict(r) for r in best], "worst": [dict(r) for r in worst]}
+
+
+    # ========== SUPERVISOR SUMMARIES ==========
+
+    def store_supervisor_summary(
+        self,
+        overall_score: float,
+        regime: str,
+        mood: str,
+        summary_text: str,
+        key_changes: dict = None,
+        accuracy_7d: float = 0.0,
+        events_count: int = 0,
+        assets_count: int = 0,
+    ) -> None:
+        """Store a supervisor summary for historical continuity."""
+        conn = self._get_conn()
+        conn.execute("""
+            INSERT INTO supervisor_summaries
+                (timestamp, overall_score, regime, mood, summary_text,
+                 key_changes, accuracy_last_7d, active_events_count, assets_analyzed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            datetime.now(timezone.utc).isoformat(),
+            overall_score,
+            regime,
+            mood,
+            summary_text,
+            json.dumps(key_changes or {}),
+            accuracy_7d,
+            events_count,
+            assets_count,
+        ))
+        conn.commit()
+        conn.close()
+        logger.info(f"📝 Stored supervisor summary: mood={mood}, regime={regime}")
+
+    def get_recent_summaries(self, n: int = 3) -> list[dict]:
+        """Get the N most recent supervisor summaries."""
+        conn = self._get_conn()
+        rows = conn.execute("""
+            SELECT * FROM supervisor_summaries
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (n,)).fetchall()
+        conn.close()
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("key_changes"):
+                try:
+                    d["key_changes"] = json.loads(d["key_changes"])
+                except Exception:
+                    pass
+            result.append(d)
+        return result
 
 
 # Singleton

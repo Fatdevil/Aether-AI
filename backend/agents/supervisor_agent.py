@@ -11,18 +11,31 @@ from llm_provider import call_llm, parse_llm_json, get_available_providers
 logger = logging.getLogger("aether.agents.supervisor")
 
 SYSTEM_PROMPT = """Du är SUPERVISOR AI – den överordnade analytikern i Aether AI-plattformen.
+Du skriver för VANLIGA MÄNNISKOR som vill förstå marknaden, inte för professionella traders.
 
 Din uppgift är att:
 1. UTVÄRDERA de 4 underliggande AI-analytikernas bedömningar (Makro, Mikro, Sentiment, Teknisk)
-2. VIKTA dem baserat på deras relevans, confidence och inbördes konsistens
-3. GENERERA ett transparent och förklarande slutvärde (-10 till +10)
+2. INTEGRERA prediktiv intelligens (marknadsregim, detekterade händelser, narrativ)
+3. REFERERA TILL tidigare analyser för att skapa kontinuitet och visa lärande
+4. GENERERA ett transparent slutvärde (-10 till +10)
+5. SKRIVA en sammanfattning som vanliga människor förstår
 
-VÄGLEDNING FÖR VIKTNING:
-- Om alla analytiker är överens: Ge hög confidence till slutvärdet
+SKRIVRIKTLINJER FÖR supervisor_text:
+- 5-7 meningar på ENKEL SVENSKA
+- Börja med vad som händer just nu ("Marknaderna visar...")
+- Om det finns tidigare analys, referera till den ("Sedan vår förra analys har...")
+- Förklara VARFÖR — inte bara vad, utan vad det BETYDER för investerare
+- Avsluta med en tydlig rekommendation
+- Undvik jargong — skriv som om du förklarar för en smart vän
+- Om systemets träffsäkerhet finns, nämn det kort för trovärdighet
+
+VIKTNINGSVÄGLEDNING:
+- Om alla analytiker är överens: Ge hög confidence
 - Om stor oenighet: Vikta analytikern med högst confidence tyngst
-- Konträr analys: Om 3 av 4 är positiva men sentiment är extremt negativt, överväg konträreffekt
-- Kategorispecifik viktning: Mäklarperspektiv viktigare för aktier, on-chain för krypto
-- Extremvärden: Ifrågasätt extremvärden – är de motiverade av data eller bias?
+- REGIM påverkar: I risk-off → Makro viktigare. I risk-on → Teknisk viktigare.
+- NARRATIV i EXTREME_CONSENSUS → konträr signal. I ACCELERATION → trendföljning.
+- HÄNDELSER med severity CRITICAL → sänk confidence, flagga risk
+- HISTORIK: Om förra analysen var fel → justera och nämn det
 
 FORMAT FÖR SVAR (JSON):
 {
@@ -33,10 +46,11 @@ FORMAT FÖR SVAR (JSON):
         "sentiment": <float 0-1>,
         "tech": <float 0-1>
     },
-    "supervisor_text": "<3-5 meningar transparent motivering på SVENSKA. Inkludera: vilka modeller som drev slutvärdet, eventuella konflikter, och din slutliga rekommendation. Nämn specifika priser och poäng.>",
+    "supervisor_text": "<5-7 meningar på ENKEL SVENSKA. Skriv som en erfaren rådgivare som förklarar för en vän. Referera till regim, händelser och tidigare analyser om de finns tillgängliga.>",
     "recommendation": "<Starkt Köp | Köp | Neutral | Sälj | Starkt Sälj>",
     "confidence": <float 0.0 till 1.0>,
-    "risk_flags": ["ev. riskflagga1", "ev. riskflagga2"]
+    "risk_flags": ["ev. riskflagga1", "ev. riskflagga2"],
+    "key_change": "<Kort: vad ändrades sedan sist? T.ex. 'Uppgraderad pga regimskifte' eller 'Oförändrad — inväntar data'>"
 }"""
 
 
@@ -66,10 +80,12 @@ class SupervisorAgent(BaseAgent):
         category: str,
         price_data: dict,
         agent_results: dict,
+        predict_context: str = "",
     ) -> dict:
         """
         Evaluate the outputs from all 4 agents and produce final assessment.
         agent_results: {"macro": {...}, "micro": {...}, "sentiment": {...}, "tech": {...}}
+        predict_context: formatted string from SupervisorContextBuilder
         """
         if self.provider == "rule_based":
             return self._rule_based_evaluate(asset_id, asset_name, price_data, agent_results)
@@ -83,9 +99,19 @@ class SupervisorAgent(BaseAgent):
 {price_ctx}
 
 ANALYTIKERNAS BEDÖMNINGAR:
-{agent_summary}
+{agent_summary}"""
 
-Utvärdera dessa 4 bedömningar. Var transparent om hur du viktar dem.
+        # Add predict context if available
+        if predict_context:
+            user_prompt += f"""
+
+PREDIKTIV INTELLIGENS & HISTORIK:
+{predict_context}"""
+
+        user_prompt += """
+
+Utvärdera dessa bedömningar med hänsyn till regim, händelser och historik.
+Skriv supervisor_text för VANLIGA MÄNNISKOR — enkel, tydlig svenska.
 Ge ditt slutvärde som JSON."""
 
         response = await call_llm(self.provider, SYSTEM_PROMPT, user_prompt, temperature=0.2)
@@ -99,6 +125,7 @@ Ge ditt slutvärde som JSON."""
                 "recommendation": result.get("recommendation", "Neutral"),
                 "confidence": float(result.get("confidence", 0.7)),
                 "risk_flags": result.get("risk_flags", []),
+                "key_change": result.get("key_change", ""),
                 "provider_used": self.provider,
             }
 
