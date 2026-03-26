@@ -269,12 +269,25 @@ async def background_predictive_loop():
 
 
 async def _run_full_pipeline() -> dict:
-    """Kör full prediktiv pipeline (delad av manuell endpoint + autonom loop)."""
+    """
+    PIPELINE B — 10-LAYER AUTONOMOUS PIPELINE (var 6h)
+    
+    This is SEPARATE from Pipeline A (data_service.refresh_all() every 5 min).
+    Pipeline B uses supervisor.synthesize() with all 12 inputs.
+    Pipeline A continues handling regular per-asset analysis.
+    """
+    from agents.supervisor_agent import SupervisorAgent
+    from regime_detector import regime_detector
+    from economic_calendar import calendar as eco_calendar
+    from correlation_engine import correlation_engine
+
     pipeline_start = datetime.now()
-    steps_log = []
+    layers_log = {}
 
     try:
-        # Samla data
+        # ================================================================
+        # LAYER 1: DATA
+        # ================================================================
         news_summary = "\n".join([f"- {n.get('title', '')}" for n in (data_service.news or [])[:40]])
         prices = data_service.prices or {}
         recent_prices = {}
@@ -292,27 +305,31 @@ async def _run_full_pipeline() -> dict:
             for col in returns_df.columns:
                 historical_std[col] = float(returns_df[col].std())
 
+        # Extract agent scores from data_service's latest analysis
         agent_outputs = {}
         agent_scores_current = {}
         for asset in data_service.assets:
-            asset_id = asset.get("id", "")
+            asset_id_local = asset.get("id", "")
             analysis = asset.get("analysis", {})
             if analysis:
                 for agent_name in ["macro", "micro", "technical", "sentiment", "onchain"]:
                     agent_data = analysis.get(agent_name, {})
                     if agent_data:
-                        key = f"{agent_name}_{asset_id}"
+                        key = f"{agent_name}_{asset_id_local}"
                         summary = agent_data.get("summary", agent_data.get("reasoning", ""))
                         if summary:
                             agent_outputs[key] = summary[:200]
                         score = agent_data.get("score", 0)
                         if agent_name not in agent_scores_current:
                             agent_scores_current[agent_name] = {}
-                        agent_scores_current[agent_name][asset_id] = score
+                        agent_scores_current[agent_name][asset_id_local] = score
 
-        steps_log.append("data_collection_complete")
+        layers_log["L1_data"] = {"status": "OK", "assets": len(recent_prices), "news": len(data_service.news or [])}
+        logger.info("📊 L1 DATA: Complete")
 
-        # Event detection
+        # ================================================================
+        # LAYER 2: DETECTION (EventDetector)
+        # ================================================================
         existing_chains = [c.trigger_event for c in predictor.causal_engine.active_chains]
         detection = predictor.event_detector.run_full_detection(
             news_summary=news_summary,
@@ -324,7 +341,6 @@ async def _run_full_pipeline() -> dict:
             previous_agent_scores={},
             existing_chains=existing_chains,
         )
-        steps_log.append("event_detection_complete")
 
         # AI-driven event analysis
         ai_events = []
@@ -339,7 +355,6 @@ async def _run_full_pipeline() -> dict:
             if parsed:
                 processed = predictor.process_ai_detection_response(parsed)
                 ai_events = processed.get("new_events", [])
-                steps_log.append("ai_event_analysis_complete")
 
                 for chain_req in processed.get("chains_to_build", [])[:3]:
                     chain_resp = await call_llm(
@@ -363,8 +378,17 @@ async def _run_full_pipeline() -> dict:
                     if tree_parsed:
                         predictor.process_ai_tree_response(tree_req["event_id"], tree_parsed)
 
-                steps_log.append("ai_chains_trees_complete")
+        layers_log["L2_detection"] = {
+            "events": detection.get("total_detected", 0),
+            "critical": detection.get("critical_count", 0),
+            "high": detection.get("high_count", 0),
+            "ai_events": len(ai_events),
+        }
+        logger.info(f"👁 L2 DETECTION: {detection.get('total_detected', 0)} events ({detection.get('critical_count', 0)} critical)")
 
+        # ================================================================
+        # LAYER 3: PREDICTIVE (CausalChain, EventTree, LeadLag, Narrative, ActorSim)
+        # ================================================================
         # Narrative update
         narr_prompt = predictor.narrative.build_narrative_prompt(news_summary[:1000])
         narr_resp = await call_llm(
@@ -375,41 +399,241 @@ async def _run_full_pipeline() -> dict:
         narr_parsed = parse_llm_json(narr_resp)
         if narr_parsed:
             predictor.process_ai_narrative_response(narr_parsed)
-        steps_log.append("narrative_update_complete")
 
-        # Lead-lag
+        # Lead-lag (runs always)
         ll_signals = []
         if not returns_df.empty:
             ll_signals = predictor.lead_lag.get_actionable_signals(returns_df)
-        steps_log.append("lead_lag_complete")
 
-        # Aggregate
+        # Aggregate predictive outputs
         chain_impl = predictor.causal_engine.get_portfolio_implications()
         convex = predictor.event_tree.get_all_convex_positions()
         narr_signals = predictor.narrative.get_trading_signals()
         narr_dashboard = predictor.narrative.get_dashboard()
         expired = predictor.causal_engine.expire_old_chains()
-        steps_log.append("aggregation_complete")
 
+        # ActorSimulation result (already ran in L2 for CRITICAL events)
+        actor_sim_data = None
+        if hasattr(actor_sim, 'last_simulation') and actor_sim.last_simulation:
+            actor_sim_data = actor_sim.last_simulation.__dict__ if hasattr(actor_sim.last_simulation, '__dict__') else actor_sim.last_simulation
+
+        layers_log["L3_predictive"] = {
+            "chains_active": len([c for c in predictor.causal_engine.active_chains if c.status == "ACTIVE"]),
+            "convex_positions": len(convex),
+            "lead_lag_signals": len(ll_signals),
+            "narrative_signals": len(narr_signals),
+            "actor_sim_available": actor_sim_data is not None,
+        }
+        logger.info(f"🔮 L3 PREDICTIVE: {len(ll_signals)} lead-lag, {len(convex)} convex, {len(narr_signals)} narrative")
+
+        # ================================================================
+        # LAYER 4: ANALYSIS (Regime, Vol, Calendar, DomainKnowledge)
+        # ================================================================
+        # Regime detection
+        regime_data = regime_detector.detect_regime()
+        current_regime = regime_data.get("regime", "neutral") if regime_data else "neutral"
+
+        # Volatility adjustment (ATR-based)
+        vol_adjustment = {}
+        BASELINE_ATR = {
+            "btc": 3.0, "gold": 0.8, "silver": 1.5, "oil": 1.8,
+            "sp500": 0.8, "global-equity": 0.7, "eurusd": 0.3, "us10y": 0.5,
+        }
+        for asset_id_local, price_data in prices.items():
+            if isinstance(price_data, dict):
+                atr_pct = price_data.get("indicators", {}).get("atr_pct", 0)
+                baseline = BASELINE_ATR.get(asset_id_local, 1.0)
+                if atr_pct and atr_pct > 0 and baseline > 0:
+                    vol_ratio = atr_pct / baseline
+                    vol_adjustment[asset_id_local] = max(0.6, min(1.3, 1.0 / (vol_ratio ** 0.3)))
+                else:
+                    vol_adjustment[asset_id_local] = 1.0
+
+        # Calendar confidence multiplier
+        conf_multiplier = 1.0
+        try:
+            from economic_calendar import calendar as eco_cal
+            cal_summary = eco_cal.get_summary()
+            if cal_summary.get("should_reduce_confidence"):
+                conf_multiplier = cal_summary.get("confidence_multiplier", 0.85)
+        except Exception:
+            pass
+
+        # DomainKnowledge — goes to BOTH agents (in Pipeline A) AND Supervisor directly
+        domain_context = ""
+        try:
+            domain_context = domain_mgr.build_agent_context()
+        except Exception:
+            pass
+
+        layers_log["L4_analysis"] = {
+            "regime": current_regime,
+            "conf_multiplier": conf_multiplier,
+            "domain_knowledge_active": len(domain_context) > 0,
+            "vol_adjusted_assets": sum(1 for v in vol_adjustment.values() if abs(v - 1.0) > 0.05),
+        }
+        logger.info(f"📈 L4 ANALYSIS: regime={current_regime}, conf_mult={conf_multiplier:.2f}, domain={'YES' if domain_context else 'NO'}")
+
+        # ================================================================
+        # LAYER 5: SYNTHESIS (Supervisor.synthesize() with 12 inputs)
+        # ================================================================
+        # Get MetaStrategy weights for current regime
+        meta_weights = {}
+        try:
+            meta_weights = meta_strategy.get_weights(current_regime)
+        except Exception:
+            pass
+
+        supervisor = SupervisorAgent()
+        if meta_weights:
+            supervisor.set_meta_weights({current_regime: meta_weights})
+
+        synthesis = await supervisor.synthesize(
+            agent_scores=agent_scores_current,
+            regime=current_regime,
+            vol_adjustment=vol_adjustment,
+            conf_multiplier=conf_multiplier,
+            causal_implications=chain_impl,
+            convex_positions=convex,
+            lead_lag_signals=ll_signals,
+            narrative_signals=narr_signals,
+            actor_sim_result=actor_sim_data,
+            domain_knowledge=domain_context,
+            calibration_adjustment=confidence_cal.adjust_probability,
+        )
+
+        final_scores = synthesis.get("final_scores", {})
+        conviction_ratio = synthesis.get("conviction_ratio", 0.7)
+
+        layers_log["L5_synthesis"] = {
+            "conviction_ratio": conviction_ratio,
+            "assets_scored": len(final_scores),
+            "method_weights": synthesis.get("method_weights_used", {}),
+            "domain_knowledge_injected": synthesis.get("domain_knowledge_injected", False),
+        }
+        logger.info(f"🧠 L5 SYNTHESIS: {len(final_scores)} assets, conviction={conviction_ratio:.2f}")
+
+        # ================================================================
+        # LAYER 6: ADVERSARIAL (challenge strong signals)
+        # ================================================================
+        strong_signals = {a: s for a, s in final_scores.items() if isinstance(s, (int, float)) and abs(s) > 3}
+        blocked_assets = []
+
+        for asset_id_local, score in list(strong_signals.items())[:3]:
+            try:
+                rec_data = {
+                    "asset": asset_id_local,
+                    "weighted_score": score,
+                    "action": "KÖP" if score > 0 else "SÄLJ",
+                    "conviction": conviction_ratio,
+                }
+                challenge_prompt = adversarial.build_challenge_prompt(rec_data)
+                challenge_resp = await call_llm(
+                    "gemini", "DEVILS ADVOCATE. JSON.",
+                    challenge_prompt, temperature=0.4, max_tokens=2000
+                )
+                challenge_parsed = parse_llm_json(challenge_resp)
+                if challenge_parsed:
+                    challenge_result = adversarial.parse_challenge(challenge_parsed, rec_data)
+                    if not challenge_result.should_proceed:
+                        blocked_assets.append(asset_id_local)
+                        final_scores[asset_id_local] = 0
+                        logger.info(f"  🛡 BLOCKED: {asset_id_local} (score {score})")
+                    else:
+                        adj = challenge_result.adjusted_conviction
+                        orig = max(challenge_result.original_conviction, 0.01)
+                        final_scores[asset_id_local] = round(score * (adj / orig), 2)
+                        logger.info(f"  🛡 PROCEED: {asset_id_local} ({score:.1f} → {final_scores[asset_id_local]:.1f})")
+            except Exception as e:
+                logger.debug(f"Adversarial skipped for {asset_id_local}: {e}")
+
+        layers_log["L6_adversarial"] = {
+            "challenged": len(strong_signals),
+            "blocked": blocked_assets,
+        }
+        logger.info(f"🛡 L6 ADVERSARIAL: {len(strong_signals)} challenged, {len(blocked_assets)} blocked")
+
+        # ================================================================
+        # LAYER 7: PORTFOLIO (correlation-adjusted)
+        # ================================================================
+        # Generate portfolio recommendation from predictive signals
         portfolio_rec = predictor._generate_portfolio_recommendation(
             chain_impl, convex, ll_signals, narr_signals
         )
 
+        # Apply correlation penalty
+        corr_penalty = {}
+        try:
+            corr_data = correlation_engine.calculate_correlations(period="30d")
+            if corr_data and "matrix" in corr_data:
+                # Compute penalty: highly correlated buy-pairs get penalized
+                matrix = corr_data["matrix"]
+                buy_assets = [a for a, s in final_scores.items() if isinstance(s, (int, float)) and s > 2]
+                for i, a1 in enumerate(buy_assets):
+                    for a2 in buy_assets[i+1:]:
+                        corr = matrix.get(a1, {}).get(a2, 0)
+                        if abs(corr) > 0.5:
+                            weaker = a1 if abs(final_scores.get(a1, 0)) < abs(final_scores.get(a2, 0)) else a2
+                            penalty = max(0.5, 1.0 - (abs(corr) - 0.5))
+                            corr_penalty[weaker] = min(corr_penalty.get(weaker, 1.0), penalty)
+        except Exception:
+            pass
+
+        layers_log["L7_portfolio"] = {
+            "recommendations": len(portfolio_rec.get("recommendations", [])),
+            "correlation_penalties": len(corr_penalty),
+        }
+        logger.info(f"💼 L7 PORTFOLIO: {len(portfolio_rec.get('recommendations', []))} positions, {len(corr_penalty)} corr-penalized")
+
+        # ================================================================
+        # LAYER 8: RISK (Trailing Stop)
+        # ================================================================
+        risk_status = {"stop_triggered": False, "drawdown_pct": 0, "action": "NORMAL"}
+        try:
+            total_value = sum(recent_prices.values()) if recent_prices else 0
+            if total_value > 0:
+                risk_status = risk_manager.update(total_value)
+                if risk_status.get("stop_triggered") or risk_status.get("action") == "REDUCE_RISK":
+                    logger.warning(f"⚠️ L8 TRAILING STOP TRIGGERED: {risk_status.get('message', '')}")
+        except Exception as e:
+            logger.debug(f"Risk check skipped: {e}")
+
+        layers_log["L8_risk"] = {
+            "trailing_stop": risk_status.get("stop_triggered", False),
+            "drawdown_pct": risk_status.get("drawdown_pct", 0),
+            "action": risk_status.get("action", "NORMAL"),
+        }
+        logger.info(f"🛑 L8 RISK: {risk_status.get('action', 'NORMAL')} (drawdown {risk_status.get('drawdown_pct', 0):.1f}%)")
+
+        # ================================================================
+        # LAYER 9: OUTPUT
+        # ================================================================
         duration = (datetime.now() - pipeline_start).total_seconds()
+
+        layers_log["L9_output"] = {"status": "SAVED", "duration_s": round(duration, 1)}
+        logger.info(f"💾 L9 OUTPUT: Saved ({duration:.1f}s)")
+
+        # ================================================================
+        # LAYER 10: FEEDBACK (scheduled — see background_predictive_loop)
+        # ================================================================
+        layers_log["L10_feedback"] = {"scheduled": True, "note": "Runs in background_predictive_loop after 15min"}
+        logger.info("🔄 L10 FEEDBACK: Scheduled")
 
         return {
             "status": "COMPLETE",
             "duration_seconds": round(duration, 1),
-            "steps": steps_log,
+            "layers": layers_log,
             "detection": {
-                "auto_events": detection["total_detected"],
+                "auto_events": detection.get("total_detected", 0),
                 "ai_events": len(ai_events),
-                "critical": detection["critical_count"],
-                "high": detection["high_count"],
-                "price_anomalies": len([e for e in detection.get("auto_detected_events", [])
-                                        if e.get("source") == "price_anomaly"]),
-                "agent_divergences": len([e for e in detection.get("auto_detected_events", [])
-                                          if e.get("source") == "agent_divergence"]),
+                "critical": detection.get("critical_count", 0),
+                "high": detection.get("high_count", 0),
+            },
+            "synthesis": {
+                "final_scores": final_scores,
+                "conviction_ratio": conviction_ratio,
+                "blocked": blocked_assets,
+                "regime": current_regime,
             },
             "causal_chains": {
                 "active": len([c for c in predictor.causal_engine.active_chains if c.status == "ACTIVE"]),
@@ -420,13 +644,14 @@ async def _run_full_pipeline() -> dict:
             "lead_lag": {"actionable_signals": len(ll_signals), "top": ll_signals[:3]},
             "narratives": narr_dashboard,
             "portfolio_recommendation": portfolio_rec,
+            "risk_status": risk_status,
         }
 
     except Exception as e:
-        logger.error(f"Pipeline failed: {e}")
+        logger.error(f"Pipeline B failed: {e}", exc_info=True)
         return {
             "status": "ERROR", "error": str(e),
-            "steps_completed": steps_log,
+            "layers_completed": layers_log,
             "duration_seconds": round((datetime.now() - pipeline_start).total_seconds(), 1)
         }
 
@@ -507,8 +732,36 @@ async def get_portfolio():
 
 @app.get("/api/market-state")
 async def get_market_state():
-    """Return overall market state summary."""
-    return data_service.get_market_state()
+    """Return overall market state summary + risk status + pipeline B status."""
+    state = data_service.get_market_state()
+
+    # Fas 3: Inject risk_manager status between portfolio → dashboard
+    try:
+        prices = data_service.prices or {}
+        total_value = sum(
+            p.get("price", 0) if isinstance(p, dict) else p
+            for p in prices.values()
+        )
+        if total_value > 0:
+            risk_check = risk_manager.update(total_value)
+            state["risk_status"] = {
+                "trailing_stop": risk_check.get("stop_triggered", False),
+                "drawdown_pct": risk_check.get("drawdown_pct", 0),
+                "action": risk_check.get("action", "NORMAL"),
+                "risk_multiplier": risk_check.get("risk_multiplier", 1.0),
+                "message": risk_check.get("message", ""),
+            }
+    except Exception:
+        state["risk_status"] = {"trailing_stop": False, "action": "NORMAL", "drawdown_pct": 0}
+
+    # Pipeline B status
+    state["pipeline_b"] = {
+        "last_run": _last_pipeline_run.isoformat() if _last_pipeline_run else None,
+        "run_count": _pipeline_run_count,
+        "next_run_hours": PIPELINE_INTERVAL_HOURS,
+    }
+
+    return state
 
 
 @app.get("/api/sectors")

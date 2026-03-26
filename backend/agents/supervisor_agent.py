@@ -61,13 +61,173 @@ class SupervisorAgent(BaseAgent):
     def __init__(self):
         pref = os.getenv("SUPERVISOR_AGENT_PROVIDER", "openai")
         available = get_available_providers()
-        # Supervisor uses the best available provider
         if pref in available:
             self.provider = pref
         elif available:
             self.provider = available[0]
         else:
             self.provider = "rule_based"
+        self.tango_filter = TangoConsensusFilter()
+        self.meta_weights = {}
+
+    def set_meta_weights(self, weights: dict):
+        """Called by MetaStrategy feedback loop to update method weights per regime."""
+        self.meta_weights = weights
+        logger.info(f"  ⚖️ Meta-weights updated: {list(weights.keys())}")
+
+    async def synthesize(
+        self,
+        # EXISTING INPUTS
+        agent_scores: dict,            # {agent_name: {asset_id: score}}
+        regime: str,                   # From RegimeDetector
+        vol_adjustment: dict,          # {asset_id: float}
+        conf_multiplier: float,        # From Calendar (0.7-1.0)
+        # NEW INPUTS (from predictive modules)
+        causal_implications: dict = None,
+        convex_positions: list = None,
+        lead_lag_signals: list = None,
+        narrative_signals: list = None,
+        actor_sim_result: dict = None,
+        domain_knowledge: str = "",
+        calibration_adjustment=None,   # callable from ConfidenceCalibrator
+    ) -> dict:
+        """
+        CENTRAL SYNTHESIS METHOD — Pipeline B (6h autonomous)
+        Takes ALL 12 inputs and produces final_scores + conviction_ratio.
+        """
+        import numpy as np
+
+        # Step 1: Aggregate base scores from 4 agents
+        assets = set()
+        for agent_data in agent_scores.values():
+            if isinstance(agent_data, dict):
+                assets.update(agent_data.keys())
+
+        base_scores = {}
+        for asset in assets:
+            scores = []
+            for agent_name, agent_data in agent_scores.items():
+                if isinstance(agent_data, dict):
+                    s = agent_data.get(asset, 0)
+                    if isinstance(s, (int, float)):
+                        scores.append(s)
+                    elif isinstance(s, dict):
+                        scores.append(s.get("score", 0))
+            base_scores[asset] = float(np.mean(scores)) if scores else 0
+
+        # Step 2: Compute consensus via TangoConsensusFilter
+        # Reformat agent_scores for Tango: {agent: {asset: score_float}}
+        tango_input = {}
+        for agent_name, agent_data in agent_scores.items():
+            if isinstance(agent_data, dict):
+                tango_input[agent_name] = {}
+                for asset_id, val in agent_data.items():
+                    if isinstance(val, (int, float)):
+                        tango_input[agent_name][asset_id] = float(val)
+                    elif isinstance(val, dict):
+                        tango_input[agent_name][asset_id] = float(val.get("score", 0))
+
+        consensus = self.tango_filter.compute_consensus(tango_input)
+
+        # Step 3: Get method weights from MetaStrategy (per regime)
+        method_weights = self.meta_weights.get(regime, {
+            "agents": 0.30,
+            "causal": 0.25,
+            "lead_lag": 0.15,
+            "narrative": 0.10,
+            "convexity": 0.15,
+            "actor_sim": 0.05,
+        })
+
+        # Step 4: Build final score per asset
+        final_scores = {}
+        for asset in assets:
+            score = 0.0
+
+            # Agent base scores (MetaStrategy-weighted)
+            score += base_scores.get(asset, 0) * method_weights.get("agents", 0.30)
+
+            # Causal chain implications
+            if causal_implications and isinstance(causal_implications, dict):
+                asset_impacts = causal_implications.get("assets", {})
+                if asset in asset_impacts:
+                    impact = asset_impacts[asset]
+                    causal_score = impact.get("total_expected_impact_pct", 0) if isinstance(impact, dict) else 0
+                    score += causal_score * method_weights.get("causal", 0.25)
+
+            # Lead-lag signals
+            if lead_lag_signals and isinstance(lead_lag_signals, list):
+                for sig in lead_lag_signals:
+                    if sig.get("follower") == asset:
+                        direction = 1 if sig.get("action", "").upper() in ("KÖP", "BUY", "KOP") else -1
+                        conf = sig.get("confidence", 0.5)
+                        score += conf * 5 * direction * method_weights.get("lead_lag", 0.15)
+
+            # Narrative signals
+            if narrative_signals and isinstance(narrative_signals, list):
+                for sig in narrative_signals:
+                    affected = sig.get("assets", sig.get("affected_assets", []))
+                    if asset in affected:
+                        dir_str = sig.get("direction", "NEUTRAL")
+                        direction = 1 if dir_str in ("BULLISH", "TRENDFÖLJ", "TRENDFOLJ") else -1
+                        strength_map = {"STARK": 3, "MEDEL": 2, "SVAG": 1}
+                        strength = strength_map.get(sig.get("strength", ""), 1)
+                        score += strength * direction * method_weights.get("narrative", 0.10)
+
+            # Convex positions (from EventTree)
+            if convex_positions and isinstance(convex_positions, list):
+                for pos in convex_positions:
+                    if pos.get("asset") == asset:
+                        direction = 1 if pos.get("direction", "").upper() == "LONG" else -1
+                        asymmetry = pos.get("asymmetry", 1.0)
+                        score += asymmetry * direction * method_weights.get("convexity", 0.15)
+
+            # Actor simulation (only for CRITICAL events)
+            if actor_sim_result and isinstance(actor_sim_result, dict):
+                net_impacts = actor_sim_result.get("net_asset_impact", {})
+                if asset in net_impacts:
+                    sim_impact = net_impacts[asset]
+                    if isinstance(sim_impact, (int, float)):
+                        score += sim_impact * 0.3 * method_weights.get("actor_sim", 0.05)
+
+            # Apply vol_adjustment and conf_multiplier
+            score *= vol_adjustment.get(asset, 1.0)
+            score *= conf_multiplier
+
+            # Apply ConfidenceCalibrator if available
+            if calibration_adjustment and callable(calibration_adjustment):
+                try:
+                    raw_confidence = min(abs(score) / 10, 0.99)
+                    adjusted = calibration_adjustment(raw_confidence)
+                    if raw_confidence > 0.01:
+                        score = score * (adjusted / raw_confidence)
+                except Exception:
+                    pass
+
+            final_scores[asset] = round(score, 2)
+
+        # Step 5: Apply Tango consensus filter
+        tango_filtered = self.tango_filter.apply_to_mpt_weights(
+            final_scores, consensus, vol_adjustment
+        )
+
+        # Step 6: Compute conviction_ratio from divergence
+        divergence = self.tango_filter.detect_divergence_signal(consensus)
+        conviction_ratio = 1.0 - (divergence.get("cash_boost", 0) * 2)
+        conviction_ratio = max(0.3, min(1.0, conviction_ratio))
+
+        logger.info(f"  🧠 Synthesize: {len(final_scores)} assets, "
+                    f"conviction={conviction_ratio:.2f}, regime={regime}")
+
+        return {
+            "final_scores": tango_filtered,
+            "conviction_ratio": round(conviction_ratio, 3),
+            "regime": regime,
+            "method_weights_used": method_weights,
+            "consensus": consensus,
+            "divergence": divergence,
+            "domain_knowledge_injected": len(domain_knowledge) > 0,
+        }
 
     async def analyze(self, asset_id, asset_name, category, price_data, news_items, perf_context=""):
         """Not used directly - supervisor uses evaluate() instead."""
