@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Globe2, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronUp, Info, MapPin } from 'lucide-react';
+import { Globe2, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronUp, Info } from 'lucide-react';
 import type { APIRegion } from '../api/client';
 import { getScoreColor, scoreToPercent } from '../types';
+import MarketGlobe from '../components/MarketGlobe';
 
 interface RegionsPageProps {
   regions: APIRegion[];
@@ -54,45 +55,8 @@ export default function RegionsPage({ regions }: RegionsPageProps) {
         AI analyserar 8 globala regioner baserat på makrofaktorer, centralbankspolitik, geopolitik och tillväxtutsikter.
       </p>
 
-      {/* World Map Bar */}
-      <div className="glass-panel" style={{ padding: '1.5rem', marginBottom: '2rem' }}>
-        <h3 style={{ marginBottom: '1rem', fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <MapPin size={16} /> Regional Heatmap
-        </h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '8px' }}>
-          {regions.map(region => {
-            const colorClass = getScoreColor(region.score);
-            return (
-              <div
-                key={region.id}
-                onClick={() => setExpandedId(expandedId === region.id ? null : region.id)}
-                style={{
-                  padding: '0.75rem',
-                  borderRadius: '12px',
-                  background: `${region.color}${Math.min(40, 15 + Math.abs(region.score) * 3).toString(16).padStart(2, '0')}`,
-                  border: `1px solid ${region.color}40`,
-                  cursor: 'pointer',
-                  textAlign: 'center',
-                  transition: 'all 0.2s ease',
-                  transform: expandedId === region.id ? 'scale(1.05)' : 'scale(1)',
-                }}
-              >
-                <div style={{ fontSize: '1.5rem', marginBottom: '0.25rem' }}>{region.flag}</div>
-                <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  {region.name}
-                </div>
-                <div style={{
-                  fontSize: '1.1rem', fontWeight: 700,
-                  color: `var(--score-${colorClass})`,
-                  marginTop: '0.2rem',
-                }}>
-                  {region.score > 0 ? '+' : ''}{region.score}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {/* 3D Globe with Market Labels */}
+      <MarketGlobe regions={regions} />
 
       {/* Summary */}
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
