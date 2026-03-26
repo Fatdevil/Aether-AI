@@ -206,45 +206,53 @@ class DataService:
                 logger.warning(f"Evaluation error: {e}")
             scheduler.mark_refreshed("evaluation")
 
-        # 7. Generate overall market state
+        # 7. Generate overall market state with human-friendly V2 summary
         avg_score = sum(a["finalScore"] for a in self.assets) / len(self.assets) if self.assets else 0
         avg_score = round(avg_score, 1)
 
-        top_positive = [a for a in self.assets if a["finalScore"] >= 3]
-        top_negative = [a for a in self.assets if a["finalScore"] <= -3]
-        summary_parts = []
-        if top_positive:
-            names = ", ".join(a["name"] for a in top_positive[:3])
-            summary_parts.append(f"Starkaste köpsignaler: {names}.")
-        if top_negative:
-            names = ", ".join(a["name"] for a in top_negative[:3])
-            summary_parts.append(f"Starkaste säljsignaler: {names}.")
-
-        top_sectors = [s for s in self.sectors if s["score"] >= 3][:3]
-        if top_sectors:
-            names = ", ".join(s["name"] for s in top_sectors)
-            summary_parts.append(f"Starkaste sektorer: {names}.")
-
-        top_regions = [r for r in self.regions if r["score"] >= 3][:3]
-        if top_regions:
-            names = ", ".join(r["name"] for r in top_regions)
-            summary_parts.append(f"Starkaste regioner: {names}.")
-
-        pos_news = sum(1 for n in self.news if n["sentiment"] == "positive")
-        neg_news = sum(1 for n in self.news if n["sentiment"] == "negative")
-        if pos_news > neg_news:
-            summary_parts.append(f"Nyhetsbild: Positiv ({pos_news} pos vs {neg_news} neg).")
-        elif neg_news > pos_news:
-            summary_parts.append(f"Nyhetsbild: Negativ ({neg_news} neg vs {pos_news} pos).")
+        # Determine mood from score
+        if avg_score >= 4:
+            mood = "RISK ON"
+        elif avg_score >= 1:
+            mood = "SELEKTIV POSITIV"
+        elif avg_score >= -1:
+            mood = "NEUTRAL"
+        elif avg_score >= -4:
+            mood = "SELEKTIV DEFENSIV"
         else:
-            summary_parts.append("Nyhetsbild: Balanserad.")
+            mood = "RISK OFF"
+
+        # Build human-friendly summary
+        summary_text = self._build_human_summary(avg_score, mood)
+
+        # Store supervisor summary for memory/continuity
+        try:
+            regime_label = ""
+            try:
+                from regime_detector import regime_detector
+                regime = regime_detector.detect_regime()
+                regime_label = regime.get("regime", "")
+            except Exception:
+                pass
+
+            store.store_supervisor_summary(
+                overall_score=avg_score,
+                regime=regime_label,
+                mood=mood,
+                summary_text=summary_text,
+                accuracy_7d=0.0,
+                events_count=0,
+                assets_count=len(self.assets),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to store supervisor summary: {e}")
 
         sched_status = scheduler.get_status()
         next_analysis = sched_status.get("full_analysis", {}).get("seconds_until_next", 0)
 
         self.market_state = {
             "overallScore": avg_score,
-            "overallSummary": " ".join(summary_parts),
+            "overallSummary": summary_text,
             "lastUpdated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             "assetCount": len(self.assets),
             "sectorCount": len(self.sectors),
@@ -258,6 +266,95 @@ class DataService:
         logger.info(f"✅ Refresh complete. {len(self.assets)} assets, {len(self.sectors)} sectors, {len(self.regions)} regions, {len(self.news)} news.")
         logger.info(f"📊 Overall market score: {avg_score:+.1f}")
         logger.info("="*50)
+
+
+    def _build_human_summary(self, avg_score: float, mood: str) -> str:
+        """Build a human-friendly summary text for the dashboard.
+
+        Writes like an experienced advisor explaining the market to a friend.
+        Integrates regime, news, previous summaries, and key signals.
+        """
+        parts = []
+
+        # --- Opening: what's happening right now ---
+        top_positive = [a for a in self.assets if a["finalScore"] >= 3]
+        top_negative = [a for a in self.assets if a["finalScore"] <= -3]
+        neutral_count = len(self.assets) - len(top_positive) - len(top_negative)
+
+        if avg_score >= 4:
+            parts.append("Marknaderna visar tydliga styrketecken just nu.")
+        elif avg_score >= 1:
+            parts.append("Marknaderna är övervägande positiva med selektiva möjligheter.")
+        elif avg_score >= -1:
+            parts.append("Marknaderna rör sig sidledes — varken tydliga köp- eller säljsignaler dominerar.")
+        elif avg_score >= -4:
+            parts.append("Marknaderna visar svaghetstecken och våra modeller flaggar för försiktighet.")
+        else:
+            parts.append("Marknaderna är under press — starka säljsignaler dominerar och vi rekommenderar defensiv positionering.")
+
+        # --- Regime context ---
+        try:
+            from regime_detector import regime_detector
+            regime = regime_detector.detect_regime()
+            regime_label = regime.get("label", "")
+            regime_conf = regime.get("confidence", 0)
+            vix_level = regime.get("signals", {}).get("vix", {}).get("level")
+
+            if regime_label and regime_conf > 0.3:
+                regime_text = f"Marknadsregimen klassas som {regime_label}"
+                if vix_level:
+                    regime_text += f" med VIX på {vix_level}"
+                regime_text += "."
+                parts.append(regime_text)
+        except Exception:
+            pass
+
+        # --- Key signals: what to buy/sell ---
+        if top_positive:
+            names = " och ".join(a["name"] for a in top_positive[:2])
+            parts.append(f"Starkast just nu: {names} med tydliga köpsignaler från våra AI-modeller.")
+        if top_negative:
+            names = " och ".join(a["name"] for a in top_negative[:2])
+            parts.append(f"Svagast: {names} där modellerna ser fallande potential.")
+
+        # --- News sentiment ---
+        pos_news = sum(1 for n in self.news if n.get("sentiment") == "positive")
+        neg_news = sum(1 for n in self.news if n.get("sentiment") == "negative")
+        total_news = len(self.news)
+        if total_news > 0:
+            if pos_news > neg_news * 1.5:
+                parts.append(f"Nyhetsflödet lutar positivt ({pos_news} positiva vs {neg_news} negativa av {total_news} analyserade).")
+            elif neg_news > pos_news * 1.5:
+                parts.append(f"Nyhetsflödet lutar negativt ({neg_news} negativa vs {pos_news} positiva) — marknaden reagerar.")
+            else:
+                parts.append(f"Nyhetsflödet är blandat ({total_news} artiklar analyserade).")
+
+        # --- Continuity: reference previous summary ---
+        try:
+            prev_summaries = store.get_recent_summaries(n=1)
+            if prev_summaries:
+                prev = prev_summaries[0]
+                prev_score = prev.get("overall_score", 0)
+                prev_mood = prev.get("mood", "")
+                score_diff = avg_score - prev_score
+
+                if abs(score_diff) >= 2:
+                    if score_diff > 0:
+                        parts.append(f"Sedan senaste analysen har marknadsläget förbättrats — från {prev_mood} till {mood}.")
+                    else:
+                        parts.append(f"Sedan senaste analysen har marknadsläget försämrats — från {prev_mood} till {mood}.")
+                elif prev_mood and prev_mood != mood:
+                    parts.append(f"Marknadshumöret har skiftat från {prev_mood} till {mood}.")
+        except Exception:
+            pass
+
+        # --- Sectors/regions highlight ---
+        top_sectors = [s for s in self.sectors if s["score"] >= 3][:2]
+        if top_sectors:
+            names = " och ".join(s["name"] for s in top_sectors)
+            parts.append(f"Sektorsmässigt sticker {names} ut positivt.")
+
+        return " ".join(parts)
 
     async def _refresh_sectors(self):
         """Fetch sector ETF prices and run sector analysis."""
