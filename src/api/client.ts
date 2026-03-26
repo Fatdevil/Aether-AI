@@ -63,6 +63,7 @@ export interface APIPortfolio {
 export interface APIMarketState {
   overallScore: number;
   overallSummary: string;
+  expandedSummary?: string;
   lastUpdated: string;
   assetCount: number;
   sectorCount: number;

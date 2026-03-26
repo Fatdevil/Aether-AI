@@ -121,6 +121,7 @@ interface DashboardProps {
   marketState: {
     overallScore: number;
     overallSummary: string;
+    expandedSummary?: string;
     lastUpdated: string;
   };
   prices: Record<string, { price: number; changePct: number; currency: string }>;
@@ -128,6 +129,7 @@ interface DashboardProps {
 
 export default function Dashboard({ assets, marketState, prices }: DashboardProps) {
   const [selectedAsset, setSelectedAsset] = useState(assets[0]);
+  const [showExpanded, setShowExpanded] = useState(false);
 
   // Update selected asset when assets change (e.g. after refresh)
   const currentSelected = assets.find(a => a.id === selectedAsset?.id) || assets[0];
@@ -265,6 +267,82 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
               <p style={{ fontSize: '0.88rem', maxWidth: '900px', lineHeight: '1.7', color: 'var(--text-tertiary)', margin: 0 }}>
                 {marketState.overallSummary}
               </p>
+
+              {/* Expandable A4 Analysis */}
+              {marketState.expandedSummary && (
+                <div style={{ marginTop: '0.75rem' }}>
+                  <button
+                    onClick={() => setShowExpanded(!showExpanded)}
+                    style={{
+                      background: showExpanded ? 'rgba(139, 92, 246, 0.12)' : 'rgba(139, 92, 246, 0.06)',
+                      border: `1px solid ${showExpanded ? 'rgba(139, 92, 246, 0.3)' : 'rgba(139, 92, 246, 0.15)'}`,
+                      padding: '0.45rem 1rem',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      transition: 'all 0.2s ease',
+                    }}
+                  >
+                    <span style={{ fontSize: '0.8rem' }}>{showExpanded ? '📖' : '📄'}</span>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--accent-purple)' }}>
+                      {showExpanded ? 'Dölj full analys' : 'Läs full AI-analys →'}
+                    </span>
+                  </button>
+
+                  {showExpanded && (
+                    <div
+                      className="animate-fade-in"
+                      style={{
+                        marginTop: '1rem',
+                        padding: '1.5rem 2rem',
+                        borderRadius: '12px',
+                        background: 'rgba(139, 92, 246, 0.04)',
+                        border: '1px solid rgba(139, 92, 246, 0.12)',
+                        maxWidth: '900px',
+                      }}
+                    >
+                      <div style={{ fontSize: '0.62rem', color: 'var(--accent-purple)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '1rem' }}>
+                        🧠 AI-genererad marknadsanalys • {marketState.lastUpdated}
+                      </div>
+                      {marketState.expandedSummary.split('\n').map((line, i) => {
+                        const trimmed = line.trim();
+                        if (!trimmed) return <div key={i} style={{ height: '0.6rem' }} />;
+                        if (trimmed.startsWith('### ')) {
+                          return (
+                            <h4 key={i} style={{
+                              fontSize: '1rem', fontWeight: 700, color: 'var(--accent-cyan)',
+                              margin: '1.2rem 0 0.4rem', borderBottom: '1px solid rgba(0,242,254,0.1)',
+                              paddingBottom: '0.3rem',
+                            }}>
+                              {trimmed.replace('### ', '')}
+                            </h4>
+                          );
+                        }
+                        if (trimmed.startsWith('## ')) {
+                          return (
+                            <h3 key={i} style={{
+                              fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)',
+                              margin: '1.2rem 0 0.4rem',
+                            }}>
+                              {trimmed.replace('## ', '')}
+                            </h3>
+                          );
+                        }
+                        return (
+                          <p key={i} style={{
+                            fontSize: '0.88rem', lineHeight: '1.8', color: 'var(--text-secondary)',
+                            margin: '0 0 0.3rem',
+                          }}>
+                            {trimmed}
+                          </p>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           );
         })()}

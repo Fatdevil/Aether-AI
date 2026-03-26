@@ -125,18 +125,20 @@ async def call_llm(
     temperature: float = 0.3,
     max_tokens: int = 800,
     model: Optional[str] = None,
+    plain_text: bool = False,
 ) -> Optional[str]:
     """
     Call an LLM and return the text response.
     Returns None if the provider is unavailable or call fails.
+    Set plain_text=True for non-JSON responses (e.g., summaries).
     """
     try:
         if not _check_daily_limit():
             return None
         if provider == "openai":
-            return await _call_openai(system_prompt, user_prompt, temperature, max_tokens, model)
+            return await _call_openai(system_prompt, user_prompt, temperature, max_tokens, model, plain_text)
         elif provider == "gemini":
-            return await _call_gemini(system_prompt, user_prompt, temperature, max_tokens, model)
+            return await _call_gemini(system_prompt, user_prompt, temperature, max_tokens, model, plain_text)
         elif provider == "anthropic":
             return await _call_anthropic(system_prompt, user_prompt, temperature, max_tokens, model)
         else:
@@ -153,6 +155,7 @@ async def call_llm_tiered(
     user_prompt: str,
     temperature: float = 0.3,
     max_tokens: int = 800,
+    plain_text: bool = False,
 ) -> tuple[Optional[str], str]:
     """
     Call LLM using tiered model routing.
@@ -164,38 +167,40 @@ async def call_llm_tiered(
     provider = config["provider"]
     model = config["model"]
 
-    result = await call_llm(provider, system_prompt, user_prompt, temperature, max_tokens, model)
+    result = await call_llm(provider, system_prompt, user_prompt, temperature, max_tokens, model, plain_text)
     if result:
         return result, f"{provider}/{model}"
 
     # Fallback: try tier 1 if higher tier failed
     if tier > 1:
         t1 = TIER_MODELS[1]
-        result = await call_llm(t1["provider"], system_prompt, user_prompt, temperature, max_tokens, t1["model"])
+        result = await call_llm(t1["provider"], system_prompt, user_prompt, temperature, max_tokens, t1["model"], plain_text)
         if result:
             return result, f"{t1['provider']}/{t1['model']}(fallback)"
 
     return None, "rule_based"
 
 
-async def _call_openai(system: str, user: str, temp: float, max_tokens: int, model: Optional[str] = None) -> Optional[str]:
+async def _call_openai(system: str, user: str, temp: float, max_tokens: int, model: Optional[str] = None, plain_text: bool = False) -> Optional[str]:
     client = _get_openai()
     if not client:
         return None
-    response = client.chat.completions.create(
-        model=model or "gpt-4o",
-        messages=[
+    kwargs = {
+        "model": model or "gpt-4o",
+        "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        temperature=temp,
-        max_tokens=max_tokens,
-        response_format={"type": "json_object"},
-    )
+        "temperature": temp,
+        "max_tokens": max_tokens,
+    }
+    if not plain_text:
+        kwargs["response_format"] = {"type": "json_object"}
+    response = client.chat.completions.create(**kwargs)
     return response.choices[0].message.content
 
 
-async def _call_gemini(system: str, user: str, temp: float, max_tokens: int, model: Optional[str] = None) -> Optional[str]:
+async def _call_gemini(system: str, user: str, temp: float, max_tokens: int, model: Optional[str] = None, plain_text: bool = False) -> Optional[str]:
     """Call Gemini with rate limiting for free tier."""
     global _gemini_last_call
 
@@ -213,19 +218,25 @@ async def _call_gemini(system: str, user: str, temp: float, max_tokens: int, mod
             await asyncio.sleep(wait_time)
         _gemini_last_call = time.monotonic()
 
-        full_prompt = f"{system}\n\n---\n\n{user}\n\nRespond ONLY with valid JSON."
+        if plain_text:
+            full_prompt = f"{system}\n\n---\n\n{user}"
+        else:
+            full_prompt = f"{system}\n\n---\n\n{user}\n\nRespond ONLY with valid JSON."
 
         try:
             from google.genai import types
+            config_kwargs = {
+                "temperature": temp,
+                "max_output_tokens": max_tokens,
+                "thinking_config": types.ThinkingConfig(thinking_budget=0),
+            }
+            if not plain_text:
+                config_kwargs["response_mime_type"] = "application/json"
+
             response = client.models.generate_content(
                 model=model_name,
                 contents=full_prompt,
-                config=types.GenerateContentConfig(
-                    temperature=temp,
-                    max_output_tokens=max_tokens,
-                    response_mime_type="application/json",
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),
-                ),
+                config=types.GenerateContentConfig(**config_kwargs),
             )
             if response and response.candidates:
                 # Gemini 2.5 may include "thinking" parts – extract only non-thought text

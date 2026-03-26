@@ -51,6 +51,7 @@ export interface LiveData {
   marketState: {
     overallScore: number;
     overallSummary: string;
+    expandedSummary?: string;
     lastUpdated: string;
   };
   prices: Record<string, { price: number; changePct: number; currency: string }>;
@@ -135,6 +136,7 @@ export function useLiveData(): LiveData {
       setMarketState({
         overallScore: apiMarketState.overallScore,
         overallSummary: apiMarketState.overallSummary,
+        expandedSummary: apiMarketState.expandedSummary,
         lastUpdated: apiMarketState.lastUpdated,
       });
 

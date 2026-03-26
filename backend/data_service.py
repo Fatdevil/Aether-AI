@@ -222,8 +222,43 @@ class DataService:
         else:
             mood = "RISK OFF"
 
-        # Build human-friendly summary
+        # Build full predict context
+        predict_context_text = ""
+        try:
+            from supervisor_context import SupervisorContextBuilder
+            ctx_builder = SupervisorContextBuilder(analysis_store=store)
+            # Build global context (not per-asset)
+            full_ctx = {
+                "regime": ctx_builder._get_regime_context(),
+                "active_events": ctx_builder._get_event_context(),
+                "narratives": ctx_builder._get_narrative_context(),
+                "causal_chains": ctx_builder._get_causal_chains_context(),
+                "event_trees": ctx_builder._get_event_trees_context(),
+                "calendar": ctx_builder._get_calendar_context(),
+                "lead_lag": ctx_builder._get_lead_lag_context(),
+                "meta_strategy": ctx_builder._get_meta_strategy_context(),
+                "previous_summary": ctx_builder._get_latest_supervisor_summary(),
+                "accuracy": ctx_builder._get_accuracy_context(),
+            }
+            # Format into prompt text
+            predict_context_text = ctx_builder._format_for_prompt(
+                "global", "Hela marknaden", "overview",
+                {}, {}, full_ctx
+            )
+        except Exception as e:
+            logger.warning(f"Predict context build failed: {e}")
+
+        # Build short human-friendly summary (rule-based, free)
         summary_text = self._build_human_summary(avg_score, mood)
+
+        # Build expanded A4 summary (LLM-powered, ~$0.001 per call)
+        expanded_text = ""
+        try:
+            expanded_text = await self._generate_expanded_summary(
+                avg_score, mood, summary_text, predict_context_text
+            )
+        except Exception as e:
+            logger.warning(f"Expanded summary generation failed: {e}")
 
         # Store supervisor summary for memory/continuity
         try:
@@ -239,7 +274,7 @@ class DataService:
                 overall_score=avg_score,
                 regime=regime_label,
                 mood=mood,
-                summary_text=summary_text,
+                summary_text=expanded_text or summary_text,
                 accuracy_7d=0.0,
                 events_count=0,
                 assets_count=len(self.assets),
@@ -253,6 +288,7 @@ class DataService:
         self.market_state = {
             "overallScore": avg_score,
             "overallSummary": summary_text,
+            "expandedSummary": expanded_text,
             "lastUpdated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             "assetCount": len(self.assets),
             "sectorCount": len(self.sectors),
@@ -267,6 +303,112 @@ class DataService:
         logger.info(f"📊 Overall market score: {avg_score:+.1f}")
         logger.info("="*50)
 
+
+    async def _generate_expanded_summary(
+        self, avg_score: float, mood: str, short_summary: str, predict_context: str
+    ) -> str:
+        """Generate an A4-length expanded summary using LLM.
+
+        Uses GPT-4o-mini or equivalent. Cost: ~$0.001 per call.
+        Returns empty string if no LLM provider is available.
+        """
+        if not predict_context and not self.assets:
+            return ""
+
+        # Build asset overview for the prompt
+        asset_lines = []
+        for a in sorted(self.assets, key=lambda x: x["finalScore"], reverse=True):
+            score = a["finalScore"]
+            emoji = "🟢" if score >= 3 else "🔴" if score <= -3 else "⚪"
+            asset_lines.append(f"  {emoji} {a['name']}: {score:+.1f} (pris: {a.get('price', 0):.2f}, ändring: {a.get('changePct', 0):+.1f}%)")
+
+        sector_lines = []
+        for s in sorted(self.sectors, key=lambda x: x["score"], reverse=True)[:5]:
+            sector_lines.append(f"  {s.get('emoji', '')} {s['name']}: {s['score']:+d}")
+
+        region_lines = []
+        for r in sorted(self.regions, key=lambda x: x["score"], reverse=True)[:5]:
+            region_lines.append(f"  {r.get('flag', '')} {r['name']}: {r['score']:+d}")
+
+        # News summary
+        pos = sum(1 for n in self.news if n.get("sentiment") == "positive")
+        neg = sum(1 for n in self.news if n.get("sentiment") == "negative")
+
+        prompt = f"""Du är Aether AI:s chefsstrateg. Skriv en UTFÖRLIG marknadsanalys på svenska.
+
+AKTUELLT MARKNADSLÄGE: {mood} (genomsnittsscore: {avg_score:+.1f})
+KORT SAMMANFATTNING: {short_summary}
+
+TILLGÅNGSÖVERSIKT:
+{chr(10).join(asset_lines)}
+
+SEKTORER (topp 5):
+{chr(10).join(sector_lines) if sector_lines else "  (ej analyserade)"}
+
+REGIONER (topp 5):
+{chr(10).join(region_lines) if region_lines else "  (ej analyserade)"}
+
+NYHETER: {pos} positiva, {neg} negativa av {len(self.news)} totalt
+
+{'='*50}
+PREDIKTIV INTELLIGENS (fullständig kontext):
+{predict_context if predict_context else "(ingen prediktiv data tillgänglig)"}
+{'='*50}
+
+INSTRUKTIONER:
+1. Skriv som en erfaren, personlig rådgivare till en vän. INTE som en robot.
+2. Texten ska vara ca 500-700 ord (ungefär 1 A4-sida).
+3. Använd ENKEL svenska. Undvik finansjargong om möjligt — förklara som för en smart person utan finansbakgrund.
+4. Strukturera texten med dessa SEKTIONER (använd ### som rubrik):
+
+### Marknadsläget just nu
+Vad händer? Varför? Hur mår marknaderna? 2-3 meningar som fångar stämningen.
+
+### Vad driver marknaden
+De viktigaste krafterna just nu — räntor, inflation, geopolitik, etc.
+Referera till specifika datapunkter och events.
+
+### Tillgångar att bevaka
+Vilka tillgångar sticker ut positivt/negativt? Varför?
+Nämn kausala kedjor och scenarioträd om de finns.
+
+### Risker och varningssignaler
+Vad kan gå fel? Devil's advocate-perspektiv.
+Nämn kommande calendar events och deras potentiella påverkan.
+
+### Framåtblick
+Vart är vi på väg? Lead-lag-signaler? Narrativfaser?
+Vad bör man göra de närmaste 1-2 veckorna?
+
+5. Om det finns KAUSALA KEDJOR — beskriv den viktigaste kedjan i klartext.
+6. Om det finns SCENARIOTRÄD — nämn de 2-3 mest sannolika scenarierna.
+7. Om det finns LEAD-LAG-signaler — förklara vad de förutspår.
+8. Om det finns en FÖREGÅENDE SUPERVISOR-SUMMERING — referera till den naturligt.
+9. Avsluta ALLTID med en tydlig "bottom line" — vad ska en investerare göra?
+
+VIKTIGT:
+- Skriv INTE "Sammanfattning:" eller "Slutsats:" — skriv som ett personligt brev.
+- Var SPECIFIK med siffror och tillgångar.
+- Undvik att bara lista saker — skapa ett NARRATIV med flöde.
+- BARA texten, inga JSON eller metadata."""
+
+        try:
+            from llm_provider import call_llm_tiered
+            result_text, provider = await call_llm_tiered(
+                tier=2,
+                system_prompt="Du är Aether AI:s chefsstrateg. Skriv analystext på enkel, varm svenska.",
+                user_prompt=prompt,
+                temperature=0.7,
+                max_tokens=2000,
+                plain_text=True,
+            )
+            if result_text:
+                logger.info(f"📝 Expanded summary generated: {len(result_text)} chars via {provider}")
+                return result_text
+        except Exception as e:
+            logger.warning(f"LLM expanded summary failed: {e}")
+
+        return ""
 
     def _build_human_summary(self, avg_score: float, mood: str) -> str:
         """Build a human-friendly summary text for the dashboard.
