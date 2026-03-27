@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Target, TrendingUp, TrendingDown, BarChart2, Brain, RefreshCw } from 'lucide-react';
+import { API_BASE } from '../api/client';
 
 interface BacktestData {
   database_stats: {
@@ -26,7 +27,7 @@ export default function BacktestPage() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:8000/api/backtest');
+      const res = await fetch(`${API_BASE}/api/backtest`);
       setData(await res.json());
     } catch (e) {
       console.error('Failed to fetch backtest data:', e);
@@ -304,7 +305,7 @@ function PredictionOutcomes() {
   const [outcomes, setOutcomes] = useState<any[]>([]);
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/predictions/outcomes?limit=200')
+    fetch(`${API_BASE}/api/predictions/outcomes?limit=200`)
       .then(r => r.json())
       .then(d => setOutcomes(d?.outcomes || []))
       .catch(() => {});
@@ -381,7 +382,7 @@ function EnsembleIndicator() {
   const [status, setStatus] = useState<any>(null);
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/ensemble/status')
+    fetch(`${API_BASE}/api/ensemble/status`)
       .then(r => r.json())
       .then(setStatus)
       .catch(() => {});

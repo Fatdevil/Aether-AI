@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Globe, Search, Filter, TrendingUp, ArrowUp, ArrowDown, Minus, Newspaper, RefreshCw } from 'lucide-react';
+import { API_BASE } from '../api/client';
 
 // Available filter options
 const REGIONS = [
@@ -85,7 +86,7 @@ export default function GlobalOverviewPage() {
       if (search) params.set('search', search);
       params.set('limit', '40');
 
-      const response = await fetch(`http://localhost:8000/api/global-news?${params}`);
+      const response = await fetch(`${API_BASE}/api/global-news?${params}`);
       const data = await response.json();
       setNews(data.news || []);
       setTrending(data.trending || []);

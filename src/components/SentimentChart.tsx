@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart } from 'recharts';
+import { API_BASE } from '../api/client';
 
 // Map Aether asset IDs to Marketaux symbols
 const ASSET_SYMBOL_MAP: Record<string, string[]> = {
@@ -33,7 +34,7 @@ export default function SentimentChart({ assetId, assetName, color }: SentimentC
     const symbols = ASSET_SYMBOL_MAP[assetId] || [assetId.toUpperCase()];
     const symbolStr = symbols.join(',');
 
-    fetch(`http://localhost:8000/api/sentiment-stats?symbols=${symbolStr}&days=14`)
+    fetch(`${API_BASE}/api/sentiment-stats?symbols=${symbolStr}&days=14`)
       .then(r => r.json())
       .then(result => {
         // Merge data from all matching symbols

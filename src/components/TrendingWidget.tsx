@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Flame, ArrowUp, ArrowDown, Minus } from 'lucide-react';
+import { API_BASE } from '../api/client';
 
 interface TrendingEntity {
   symbol: string;
@@ -13,7 +14,7 @@ export default function TrendingWidget() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/trending')
+    fetch(`${API_BASE}/api/trending`)
       .then(r => r.json())
       .then(data => {
         setTrending(data.trending || []);

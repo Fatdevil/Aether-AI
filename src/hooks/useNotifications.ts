@@ -3,6 +3,7 @@
  * Requests Notification API permission on first load.
  */
 import { useEffect, useRef, useCallback } from 'react';
+import { API_BASE } from '../api/client';
 
 const POLL_INTERVAL = 60_000; // Check every 60 seconds
 const MIN_IMPACT = 8; // Only notify on impact >= 8
@@ -57,7 +58,7 @@ export function useNotifications() {
   useEffect(() => {
     const checkAlerts = async () => {
       try {
-        const res = await fetch(`http://localhost:8000/api/alerts?min_impact=${MIN_IMPACT}`);
+        const res = await fetch(`${API_BASE}/api/alerts?min_impact=${MIN_IMPACT}`);
         const data = await res.json();
         const alerts: Alert[] = data.alerts || [];
 

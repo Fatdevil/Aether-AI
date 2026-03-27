@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Activity, Brain, Target, TrendingUp, Zap, CheckCircle, XCircle, BarChart3, Database } from 'lucide-react';
+import { API_BASE } from '../api/client';
 
 interface AgentStats {
   accuracy_direction: number;
@@ -40,7 +41,7 @@ export default function PerformancePage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const resp = await fetch('http://localhost:8000/api/performance');
+      const resp = await fetch(`${API_BASE}/api/performance`);
       const json = await resp.json();
       setData(json);
     } catch { /* Backend might not be running */ }

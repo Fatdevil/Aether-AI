@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { MessageCircle, X, Send, Bot, User, Sparkles, Minimize2 } from 'lucide-react';
+import { API_BASE } from '../api/client';
 
 interface ChatMessage {
   id: string;
@@ -8,8 +9,6 @@ interface ChatMessage {
   timestamp: Date;
   provider?: string;
 }
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export default function ChatPanel() {
   const [isOpen, setIsOpen] = useState(false);

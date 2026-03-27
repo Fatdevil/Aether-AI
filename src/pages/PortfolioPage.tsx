@@ -3,6 +3,7 @@ import { Briefcase, TrendingUp, TrendingDown, Minus, ShieldAlert, Activity } fro
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, AreaChart, Area, XAxis, YAxis, CartesianGrid } from 'recharts';
 import type { Asset } from '../types';
 import { getScoreColor, getRecommendation } from '../types';
+import { API_BASE } from '../api/client';
 
 interface PortfolioPageProps {
   portfolio: {
@@ -31,7 +32,7 @@ function RiskPanel() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/portfolio/risk')
+    fetch(`${API_BASE}/api/portfolio/risk`)
       .then(r => r.json())
       .then(data => {
         setRisk(data?.risk_metrics || null);
@@ -337,7 +338,7 @@ function ScoreHistory() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/portfolio/history?days=7')
+    fetch(`${API_BASE}/api/portfolio/history?days=7`)
       .then(r => r.json())
       .then(data => {
         setHistory(data?.history || []);

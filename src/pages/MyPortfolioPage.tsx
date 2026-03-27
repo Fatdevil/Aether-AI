@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Upload, Search, Plus, Trash2, BarChart2, Briefcase, Camera, ArrowRight, PieChart as PieIcon, TrendingUp } from 'lucide-react';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, AreaChart, Area } from 'recharts';
+import { API_BASE } from '../api/client';
 
 interface Holding {
   name: string;
@@ -34,7 +35,7 @@ export default function MyPortfolioPage() {
 
   // Auto-load risk profiles on mount
   useEffect(() => {
-    fetch('http://localhost:8000/api/risk-profiles')
+    fetch(`${API_BASE}/api/risk-profiles`)
       .then(r => r.json())
       .then(data => {
         setRiskProfiles(data);
@@ -46,7 +47,7 @@ export default function MyPortfolioPage() {
 
     // Load composite backtest
     setCompositeLoading(true);
-    fetch('http://localhost:8000/api/composite-portfolio')
+    fetch(`${API_BASE}/api/composite-portfolio`)
       .then(r => r.json())
       .then(data => {
         if (!data.error) setComposite(data);
@@ -55,7 +56,7 @@ export default function MyPortfolioPage() {
       .catch(() => setCompositeLoading(false));
 
     // Load feedback stats
-    fetch('http://localhost:8000/api/feedback-stats')
+    fetch(`${API_BASE}/api/feedback-stats`)
       .then(r => r.json())
       .then(data => { if (!data.error) setFeedback(data); })
       .catch(() => {});
@@ -67,7 +68,7 @@ export default function MyPortfolioPage() {
     if (tickers.length === 0) { setPortfolioNews([]); return; }
 
     setNewsLoading(true);
-    fetch(`http://localhost:8000/api/user-portfolio/news?tickers=${tickers.join(',')}`)
+    fetch(`${API_BASE}/api/user-portfolio/news?tickers=${tickers.join(',')}`)
       .then(r => r.json())
       .then(data => {
         setPortfolioNews(data.news || []);
@@ -81,7 +82,7 @@ export default function MyPortfolioPage() {
     if (q.length < 2) { setSearchResults([]); return; }
     setSearching(true);
     try {
-      const res = await fetch(`http://localhost:8000/api/user-portfolio/search?q=${encodeURIComponent(q)}`);
+      const res = await fetch(`${API_BASE}/api/user-portfolio/search?q=${encodeURIComponent(q)}`);
       const data = await res.json();
       setSearchResults(data.results || []);
     } catch { setSearchResults([]); }
@@ -131,7 +132,7 @@ export default function MyPortfolioPage() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await fetch('http://localhost:8000/api/user-portfolio/parse-image', {
+      const res = await fetch(`${API_BASE}/api/user-portfolio/parse-image`, {
         method: 'POST', body: formData,
       });
       const data = await res.json();
@@ -163,7 +164,7 @@ export default function MyPortfolioPage() {
     setComparing(true);
     try {
       // Fetch comparison + frontier
-      const res = await fetch('http://localhost:8000/api/user-portfolio/compare', {
+      const res = await fetch(`${API_BASE}/api/user-portfolio/compare`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ holdings }),
@@ -175,7 +176,7 @@ export default function MyPortfolioPage() {
 
       // Fetch risk profiles
       try {
-        const rpRes = await fetch('http://localhost:8000/api/risk-profiles');
+        const rpRes = await fetch(`${API_BASE}/api/risk-profiles`);
         const rpData = await rpRes.json();
         setRiskProfiles(rpData);
         // Auto-select recommended profile
