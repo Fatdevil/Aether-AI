@@ -40,8 +40,8 @@ export default function ChatPanel() {
     }
   }, [isOpen]);
 
-  const sendMessage = useCallback(async () => {
-    const trimmed = input.trim();
+  const sendMessage = useCallback(async (directMessage?: string) => {
+    const trimmed = (directMessage || input).trim();
     if (!trimmed || isLoading) return;
 
     const userMsg: ChatMessage = {
@@ -361,7 +361,7 @@ export default function ChatPanel() {
               {['Marknadsläge?', 'Starkaste tillgångar?', 'Aktuell regim?', 'Sektorrotation?'].map(q => (
                 <button
                   key={q}
-                  onClick={() => { setInput(q); setTimeout(() => sendMessage(), 50); }}
+                  onClick={() => sendMessage(q)}
                   style={{
                     padding: '5px 10px', fontSize: 11, borderRadius: 8,
                     background: 'rgba(0,255,200,0.05)', border: '1px solid rgba(0,255,200,0.15)',
@@ -408,7 +408,7 @@ export default function ChatPanel() {
               onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.1)'; }}
             />
             <button
-              onClick={sendMessage}
+              onClick={() => sendMessage()}
               disabled={isLoading || !input.trim()}
               style={{
                 width: 40, height: 40, borderRadius: 10,
