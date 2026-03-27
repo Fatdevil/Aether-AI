@@ -13,6 +13,7 @@ import PerformancePage from './pages/PerformancePage';
 import BacktestPage from './pages/BacktestPage';
 import PredictivePage from './pages/PredictivePage';
 import ToolsPage from './pages/ToolsPage';
+import ChatPanel from './components/ChatPanel';
 
 import GlobalOverviewPage from './pages/GlobalOverviewPage';
 import './index.css';
@@ -46,6 +47,7 @@ function AppContent() {
         <Route path="/global" element={<GlobalOverviewPage />} />
       </Routes>
       <MobileNav />
+      <ChatPanel />
     </div>
   );
 }

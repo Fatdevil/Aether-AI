@@ -33,7 +33,8 @@ from predictive import (CausalChainEngine, EventTreeEngine, LeadLagDetector, Nar
                         ConfidenceCalibrator, MetaStrategySelector, AdversarialAgent)
 from daily_scheduler import DailyScheduler
 from system_health import SystemHealthCheck
-from llm_provider import call_llm, parse_llm_json
+from llm_provider import call_llm, call_llm_tiered, parse_llm_json
+from analysis_store import store as analysis_store
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("aether")
@@ -2286,3 +2287,163 @@ async def system_health():
 async def scheduler_status():
     """Status för daglig scheduler"""
     return daily_sched.get_status()
+
+
+# ============================================================
+# AI Chat — Conversational interface to Aether AI data
+# ============================================================
+
+@app.post("/api/chat")
+async def chat(request: Request):
+    """AI Chat endpoint — answers questions using system data + Gemini Flash."""
+    body = await request.json()
+    user_message = body.get("message", "").strip()
+    history = body.get("history", [])  # Previous messages for context
+
+    if not user_message:
+        return {"error": "No message provided"}
+
+    # ---- Gather system context ----
+    context_parts = []
+
+    # 1. Current market state
+    try:
+        state = data_service.get_market_state()
+        context_parts.append(f"AKTUELLT MARKNADSLÄGE ({datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}):")
+        context_parts.append(f"  Totalscore: {state.get('overallScore', 'N/A')}/10")
+        context_parts.append(f"  Sammanfattning: {state.get('overallSummary', 'N/A')}")
+        if state.get("expandedSummary"):
+            context_parts.append(f"  Detaljerad: {state['expandedSummary'][:500]}")
+        context_parts.append(f"  Senast uppdaterat: {state.get('lastUpdated', 'N/A')}")
+    except Exception:
+        context_parts.append("Marknadsdata: ej tillgängligt just nu.")
+
+    # 2. Current assets with scores
+    try:
+        assets = data_service.get_assets()
+        if assets:
+            context_parts.append("\nTILLGÅNGAR (aktuella AI-scores):")
+            for a in assets[:10]:
+                scores = a.get("scores", {})
+                context_parts.append(
+                    f"  {a['name']} ({a['id']}): Score={a.get('finalScore', 'N/A')}, "
+                    f"Pris={a.get('price', 'N/A')} {a.get('currency', '')}, "
+                    f"Förändring={a.get('changePct', 0):.1f}%, "
+                    f"Macro={scores.get('macro', 'N/A')}, Micro={scores.get('micro', 'N/A')}, "
+                    f"Sentiment={scores.get('sentiment', 'N/A')}, Tech={scores.get('tech', 'N/A')}"
+                )
+    except Exception:
+        pass
+
+    # 3. Recent supervisor summaries (historical)
+    try:
+        summaries = analysis_store.get_recent_summaries(n=5)
+        if summaries:
+            context_parts.append("\nHISTORISKA SUPERVISOR-BEDÖMNINGAR (senaste 5):")
+            for s in summaries:
+                context_parts.append(
+                    f"  [{s.get('timestamp', '?')}] Score: {s.get('overall_score', 'N/A')}, "
+                    f"Regim: {s.get('regime', 'N/A')}, "
+                    f"Sammanfattning: {str(s.get('summary', 'N/A'))[:200]}"
+                )
+    except Exception:
+        pass
+
+    # 4. Recent asset analyses
+    try:
+        recent = analysis_store.get_recent_analyses(hours=168, analysis_type="asset")  # 7 days
+        if recent:
+            context_parts.append(f"\nHISTORISKA ANALYSER (senaste 7 dagarna): {len(recent)} st")
+            # Group by asset for the AI
+            asset_analyses = {}
+            for a in recent[:50]:
+                aid = a.get("asset_id", "unknown")
+                if aid not in asset_analyses:
+                    asset_analyses[aid] = []
+                asset_analyses[aid].append({
+                    "timestamp": a.get("timestamp"),
+                    "score": a.get("final_score"),
+                    "price": a.get("price_at_analysis"),
+                })
+            for aid, entries in list(asset_analyses.items())[:8]:
+                scores_str = ", ".join([f"{e['timestamp'][:10]}: score={e['score']}, pris={e['price']}" for e in entries[:5]])
+                context_parts.append(f"  {aid}: {scores_str}")
+    except Exception:
+        pass
+
+    # 5. Current regime
+    try:
+        regime = data_service.get_regime_data()
+        if regime:
+            context_parts.append(f"\nAKTUELL MARKNADSREGIM: {regime.get('label', 'N/A')} ({regime.get('regime', '')})")
+            context_parts.append(f"  Beskrivning: {regime.get('description', 'N/A')}")
+            context_parts.append(f"  Konfidens: {regime.get('confidence', 'N/A')}")
+    except Exception:
+        pass
+
+    # 6. Sectors overview
+    try:
+        sectors = data_service.get_sectors()
+        if sectors:
+            context_parts.append("\nSEKTORER:")
+            for s in sectors[:10]:
+                context_parts.append(f"  {s['name']}: Score={s.get('score', 'N/A')}, Signal={s.get('rotationSignal', 'N/A')}")
+    except Exception:
+        pass
+
+    context_text = "\n".join(context_parts)
+
+    # ---- Build conversation for LLM ----
+    system_prompt = """Du är Aether AI-assistenten — en intelligent marknadschatt integrerad i ett autonomt AI-analysystem.
+
+DINA EGENSKAPER:
+- Du svarar på svenska, koncist och insiktsfullt
+- Du har tillgång till REALTIDSDATA från Aether AI-systemet (se KONTEXT nedan)
+- Du analyserar marknader, tillgångar, sektorer, regimer och historiska bedömningar
+- Du kan jämföra hur AI:ns bedömning sett ut över tid
+- Du är ärlig när data saknas eller är begränsat
+
+SVARSFORMAT:
+- Svara i markdown (bold, listor, etc.)
+- Var specifik med siffror och data från kontexten
+- Håll svaren under 300 ord om inte användaren ber om mer detalj
+- Använd emojis sparsamt men effektivt (📈 📉 ⚠️ 🎯)
+
+VIKTIGT: Basera ALLTID dina svar på den faktiska data du har tillgång till. Spekulera inte."""
+
+    # Build user prompt with context + history
+    history_text = ""
+    if history:
+        history_text = "\nTIDIGARE KONVERSATION:\n"
+        for msg in history[-6:]:  # Last 6 messages for context
+            role = "Användaren" if msg.get("role") == "user" else "Aether AI"
+            history_text += f"{role}: {msg.get('content', '')}\n"
+
+    user_prompt = f"""SYSTEMKONTEXT (Aether AI-data):
+{context_text}
+
+{history_text}
+ANVÄNDARENS FRÅGA: {user_message}"""
+
+    # ---- Call Gemini Flash (Tier 1 = cheapest) ----
+    try:
+        response, provider = await call_llm_tiered(
+            tier=1,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.5,
+            max_tokens=1200,
+            plain_text=True,
+        )
+        if not response:
+            return {"response": "Tyvärr kunde jag inte generera ett svar just nu. Försök igen om en stund.", "provider": "none"}
+
+        return {
+            "response": response,
+            "provider": provider,
+            "context_size": len(context_text),
+        }
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
+        return {"response": f"Ett fel uppstod: {str(e)}", "provider": "error"}
+
