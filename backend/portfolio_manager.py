@@ -1,6 +1,6 @@
 """
 Portfolio Manager - Track real positions, P/L, and risk metrics.
-Stores positions in SQLite and calculates live P/L, allocation, and risk.
+Stores positions in database (PostgreSQL in prod, SQLite locally).
 """
 
 import sqlite3
@@ -11,6 +11,8 @@ import time as _time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+from db import get_connection, DB_TYPE
 
 logger = logging.getLogger("aether.portfolio")
 
@@ -24,7 +26,10 @@ class PortfolioManager:
         self.db_path = db_path
         self._init_tables()
 
-    def _get_conn(self) -> sqlite3.Connection:
+    def _get_conn(self):
+        """Get database connection — PostgreSQL or SQLite via db.py."""
+        if DB_TYPE == "postgresql":
+            return get_connection()
         for attempt in range(3):
             try:
                 conn = sqlite3.connect(self.db_path, timeout=10)
@@ -38,6 +43,10 @@ class PortfolioManager:
                     raise
 
     def _init_tables(self):
+        if DB_TYPE == "postgresql":
+            # Tables created by init_postgresql_tables() in db.py
+            logger.info("💼 Portfolio manager initialized (PostgreSQL)")
+            return
         conn = self._get_conn()
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS positions (
@@ -49,7 +58,7 @@ class PortfolioManager:
                 entry_date TEXT NOT NULL,
                 currency TEXT DEFAULT '$',
                 notes TEXT,
-                status TEXT DEFAULT 'open',   -- open | closed
+                status TEXT DEFAULT 'open',
                 closed_price REAL,
                 closed_date TEXT,
                 created_at TEXT NOT NULL,
@@ -64,7 +73,7 @@ class PortfolioManager:
                 total_pnl REAL,
                 total_pnl_pct REAL,
                 position_count INTEGER,
-                snapshot_data TEXT   -- JSON: per-position details
+                snapshot_data TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_positions_asset ON positions(asset_id);

@@ -204,10 +204,15 @@ def optimize_signal_weights(tickers: dict = None) -> dict:
         "trained_at": datetime.now().isoformat(),
     }
 
-    # Save to disk
-    os.makedirs(os.path.dirname(WEIGHTS_FILE), exist_ok=True)
-    with open(WEIGHTS_FILE, "w") as f:
-        json.dump(result, f, indent=2)
+    # Save to database (persistent across deploys)
+    try:
+        from db import kv_set
+        kv_set("signal_weights", result)
+    except Exception:
+        # Fallback to file
+        os.makedirs(os.path.dirname(WEIGHTS_FILE), exist_ok=True)
+        with open(WEIGHTS_FILE, "w") as f:
+            json.dump(result, f, indent=2)
 
     logger.info(f"  ✅ Signal weights optimized: R²={r_squared:.4f}, {len(all_features)} samples")
     for name, w in weights.items():
@@ -218,11 +223,24 @@ def optimize_signal_weights(tickers: dict = None) -> dict:
 
 def get_signal_weights() -> dict:
     """Get cached signal weights, or train if not available."""
+    # Try KV store first (PostgreSQL-persistent)
+    try:
+        from db import kv_get
+        data = kv_get("signal_weights")
+        if data:
+            trained = data.get("trained_at", "")
+            if trained:
+                age = (datetime.now() - datetime.fromisoformat(trained)).days
+                if age < 7:
+                    return data
+    except Exception:
+        pass
+    
+    # Fallback to file
     if os.path.exists(WEIGHTS_FILE):
         try:
             with open(WEIGHTS_FILE, "r") as f:
                 data = json.load(f)
-            # Retrain if older than 7 days
             trained = data.get("trained_at", "")
             if trained:
                 age = (datetime.now() - datetime.fromisoformat(trained)).days

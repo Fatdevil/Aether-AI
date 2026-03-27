@@ -36,6 +36,15 @@ class ConfidenceCalibrator:
         self._load()
 
     def _load(self):
+        try:
+            from db import kv_get
+            data = kv_get("confidence_calibration")
+            if data:
+                self.records = [PredictionRecord(**r) for r in data.get("records", [])]
+                self.calibration_curve = data.get("curve", {})
+                return
+        except Exception:
+            pass
         if os.path.exists(CALIBRATION_FILE):
             try:
                 with open(CALIBRATION_FILE, "r") as f:
@@ -46,14 +55,19 @@ class ConfidenceCalibrator:
                 pass
 
     def _save(self):
-        os.makedirs("data", exist_ok=True)
-        with open(CALIBRATION_FILE, "w") as f:
-            json.dump({
-                "records": [{"prediction_id": r.prediction_id, "stated_probability": r.stated_probability,
-                            "outcome": r.outcome, "source": r.source, "timestamp": r.timestamp, "asset": r.asset}
-                           for r in self.records[-5000:]],
-                "curve": self.calibration_curve
-            }, f)
+        data = {
+            "records": [{"prediction_id": r.prediction_id, "stated_probability": r.stated_probability,
+                        "outcome": r.outcome, "source": r.source, "timestamp": r.timestamp, "asset": r.asset}
+                       for r in self.records[-5000:]],
+            "curve": self.calibration_curve
+        }
+        try:
+            from db import kv_set
+            kv_set("confidence_calibration", data)
+        except Exception:
+            os.makedirs("data", exist_ok=True)
+            with open(CALIBRATION_FILE, "w") as f:
+                json.dump(data, f)
 
     def log_prediction(self, prediction_id: str, stated_prob: float, source: str, asset: str = ""):
         self.records.append(PredictionRecord(

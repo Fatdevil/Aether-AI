@@ -1,6 +1,7 @@
 """
-Analysis Store - SQLite persistence for all AI analyses, price snapshots, and evaluations.
+Analysis Store - Persistent storage for all AI analyses, price snapshots, and evaluations.
 Enables backtesting, accuracy tracking, and adaptive learning.
+Supports PostgreSQL (production) and SQLite (local dev) via db.py.
 """
 
 import sqlite3
@@ -10,6 +11,8 @@ import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
+
+from db import get_connection, DB_TYPE, init_postgresql_tables
 
 logger = logging.getLogger("aether.store")
 
@@ -23,13 +26,17 @@ class AnalysisStore:
         self.db_path = db_path
         self._init_db()
 
-    def _get_conn(self) -> sqlite3.Connection:
+    def _get_conn(self):
+        """Get database connection — PostgreSQL or SQLite via db.py."""
+        if DB_TYPE == "postgresql":
+            return get_connection()
+        # Local dev: use SQLite directly
         import time as _time
         for attempt in range(3):
             try:
                 conn = sqlite3.connect(self.db_path, timeout=10)
                 conn.row_factory = sqlite3.Row
-                conn.execute("PRAGMA journal_mode=WAL")  # Better concurrent reads
+                conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA foreign_keys=ON")
                 return conn
             except sqlite3.OperationalError as e:
@@ -40,6 +47,10 @@ class AnalysisStore:
 
     def _init_db(self):
         """Create tables if they don't exist."""
+        if DB_TYPE == "postgresql":
+            init_postgresql_tables()
+            logger.info("📦 Analysis store initialized (PostgreSQL)")
+            return
         conn = self._get_conn()
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS analyses (

@@ -68,51 +68,47 @@ class EventTreeEngine:
         self._load()
 
     def _load(self):
-        if os.path.exists(TREE_FILE):
+        raw_data = None
+        try:
+            from db import kv_get
+            raw_data = kv_get("event_trees")
+        except Exception:
+            pass
+        if not raw_data and os.path.exists(TREE_FILE):
             try:
                 with open(TREE_FILE, "r") as f:
-                    data = json.load(f)
-                    # Trees are complex nested structures — load as raw dicts
-                    for tree_data in data.get("trees", []):
-                        try:
-                            root = self._parse_node_dict(tree_data.get("root", {}))
-                            leaves = self._get_leaves(root)
-                            tree = EventTree(
-                                id=tree_data.get("id", ""),
-                                name=tree_data.get("name", ""),
-                                root_event=tree_data.get("root_event", ""),
-                                created_at=tree_data.get("created_at", ""),
-                                root=root,
-                                total_scenarios=len(leaves),
-                                expected_portfolio_impact=tree_data.get("expected_portfolio_impact", {}),
-                                convex_positions=tree_data.get("convex_positions", []),
-                                status=tree_data.get("status", "ACTIVE")
-                            )
-                            self.trees.append(tree)
-                        except Exception:
-                            pass
+                    raw_data = json.load(f)
             except Exception:
                 pass
-
-    def _parse_node_dict(self, d: Dict) -> TreeNode:
-        """Recursively parse a dict into TreeNode"""
-        children = [self._parse_node_dict(c) for c in d.get("children", [])]
-        return TreeNode(
-            id=d.get("id", ""),
-            event=d.get("event", ""),
-            probability=float(d.get("probability", 1.0)),
-            time_horizon_days=int(d.get("time_horizon_days", 14)),
-            asset_impacts=d.get("asset_impacts", {}),
-            children=children,
-            is_leaf=len(children) == 0,
-            monitoring_signal=d.get("monitoring_signal", ""),
-            confidence=d.get("confidence", "MEDIUM")
-        )
+        if raw_data:
+            for tree_data in raw_data.get("trees", []):
+                try:
+                    root = self._parse_node_dict(tree_data.get("root", {}))
+                    leaves = self._get_leaves(root)
+                    tree = EventTree(
+                        id=tree_data.get("id", ""),
+                        name=tree_data.get("name", ""),
+                        root_event=tree_data.get("root_event", ""),
+                        created_at=tree_data.get("created_at", ""),
+                        root=root,
+                        total_scenarios=len(leaves),
+                        expected_portfolio_impact=tree_data.get("expected_portfolio_impact", {}),
+                        convex_positions=tree_data.get("convex_positions", []),
+                        status=tree_data.get("status", "ACTIVE")
+                    )
+                    self.trees.append(tree)
+                except Exception:
+                    pass
 
     def _save(self):
-        os.makedirs(os.path.dirname(TREE_FILE), exist_ok=True)
-        with open(TREE_FILE, "w") as f:
-            json.dump({"trees": [asdict(t) for t in self.trees[-50:]]}, f, default=str)
+        data = {"trees": [asdict(t) for t in self.trees[-50:]]}
+        try:
+            from db import kv_set
+            kv_set("event_trees", data)
+        except Exception:
+            os.makedirs(os.path.dirname(TREE_FILE), exist_ok=True)
+            with open(TREE_FILE, "w") as f:
+                json.dump(data, f, default=str)
 
     def build_tree_prompt(self, event: str, context: str = "") -> str:
         """Genererar prompt för AI att bygga ett event-träd"""

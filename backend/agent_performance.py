@@ -33,6 +33,15 @@ class AgentPerformanceTracker:
         self._load()
 
     def _load(self):
+        try:
+            from db import kv_get
+            data = kv_get("agent_performance_log")
+            if data:
+                self.predictions = [AgentPrediction(**p) for p in data]
+                return
+        except Exception:
+            pass
+        # Fallback to file
         if os.path.exists(PERFORMANCE_FILE):
             try:
                 with open(PERFORMANCE_FILE, "r") as f:
@@ -42,9 +51,14 @@ class AgentPerformanceTracker:
                 self.predictions = []
 
     def _save(self):
-        os.makedirs(os.path.dirname(PERFORMANCE_FILE), exist_ok=True)
-        with open(PERFORMANCE_FILE, "w") as f:
-            json.dump([asdict(p) for p in self.predictions], f, indent=2)
+        data = [asdict(p) for p in self.predictions]
+        try:
+            from db import kv_set
+            kv_set("agent_performance_log", data)
+        except Exception:
+            os.makedirs(os.path.dirname(PERFORMANCE_FILE), exist_ok=True)
+            with open(PERFORMANCE_FILE, "w") as f:
+                json.dump(data, f, indent=2)
 
     def log_predictions(self, agent_scores: Dict[str, Dict[str, float]], regime: str):
         """Logga alla agenters scores för alla tillgångar"""

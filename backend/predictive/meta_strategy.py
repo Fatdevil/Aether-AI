@@ -35,6 +35,17 @@ class MetaStrategySelector:
         self._load()
 
     def _load(self):
+        try:
+            from db import kv_get
+            data = kv_get("meta_strategy")
+            if data:
+                self.records = data.get("records", [])
+                saved_weights = data.get("weights", {})
+                if saved_weights:
+                    self.current_weights = saved_weights
+                return
+        except Exception:
+            pass
         if os.path.exists(META_FILE):
             try:
                 with open(META_FILE, "r") as f:
@@ -47,9 +58,14 @@ class MetaStrategySelector:
                 pass
 
     def _save(self):
-        os.makedirs("data", exist_ok=True)
-        with open(META_FILE, "w") as f:
-            json.dump({"records": self.records[-2000:], "weights": self.current_weights}, f)
+        data = {"records": self.records[-2000:], "weights": self.current_weights}
+        try:
+            from db import kv_set
+            kv_set("meta_strategy", data)
+        except Exception:
+            os.makedirs("data", exist_ok=True)
+            with open(META_FILE, "w") as f:
+                json.dump(data, f)
 
     def log_method_performance(self, method: str, regime: str, quality: float):
         self.records.append({

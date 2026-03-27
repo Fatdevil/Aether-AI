@@ -83,8 +83,20 @@ _refresh_count = 0
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: fetch initial data + start background loops."""
+    """Startup: init DB + fetch initial data + start background loops."""
     logger.info("🚀 Aether AI Backend starting...")
+    
+    # Initialize PostgreSQL tables if DATABASE_URL is set
+    try:
+        from db import DB_TYPE, init_postgresql_tables
+        if DB_TYPE == "postgresql":
+            init_postgresql_tables()
+            logger.info("🐘 PostgreSQL tables ready — data persists across deploys!")
+        else:
+            logger.info("📁 Using local SQLite — data resets on deploy")
+    except Exception as e:
+        logger.warning(f"DB init: {e}")
+    
     await data_service.refresh_all()
     # Start background loops
     refresh_task = asyncio.create_task(background_refresh())

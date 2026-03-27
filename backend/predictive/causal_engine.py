@@ -90,27 +90,41 @@ class CausalChainEngine:
         self._load()
 
     def _load(self):
-        if os.path.exists(CHAIN_HISTORY_FILE):
+        raw_data = None
+        try:
+            from db import kv_get
+            raw_data = kv_get("causal_chains")
+        except Exception:
+            pass
+        if not raw_data and os.path.exists(CHAIN_HISTORY_FILE):
             try:
                 with open(CHAIN_HISTORY_FILE, "r") as f:
-                    data = json.load(f)
-                    for chain_data in data.get("active", []):
-                        links = [CausalLink(**l) for l in chain_data.pop("links", [])]
-                        self.active_chains.append(CausalChain(**chain_data, links=links))
-                    for chain_data in data.get("archived", []):
-                        links = [CausalLink(**l) for l in chain_data.pop("links", [])]
-                        self.archived_chains.append(CausalChain(**chain_data, links=links))
+                    raw_data = json.load(f)
             except Exception as e:
                 logger.error(f"Failed to load causal chains: {e}")
+        if raw_data:
+            try:
+                for chain_data in raw_data.get("active", []):
+                    links = [CausalLink(**l) for l in chain_data.pop("links", [])]
+                    self.active_chains.append(CausalChain(**chain_data, links=links))
+                for chain_data in raw_data.get("archived", []):
+                    links = [CausalLink(**l) for l in chain_data.pop("links", [])]
+                    self.archived_chains.append(CausalChain(**chain_data, links=links))
+            except Exception as e:
+                logger.error(f"Failed to parse causal chains: {e}")
 
     def _save(self):
-        os.makedirs(os.path.dirname(CHAIN_HISTORY_FILE), exist_ok=True)
         data = {
             "active": [asdict(c) for c in self.active_chains[-100:]],
             "archived": [asdict(c) for c in self.archived_chains[-200:]]
         }
-        with open(CHAIN_HISTORY_FILE, "w") as f:
-            json.dump(data, f, indent=2, default=str)
+        try:
+            from db import kv_set
+            kv_set("causal_chains", data)
+        except Exception:
+            os.makedirs(os.path.dirname(CHAIN_HISTORY_FILE), exist_ok=True)
+            with open(CHAIN_HISTORY_FILE, "w") as f:
+                json.dump(data, f, indent=2, default=str)
 
     def build_chain_prompt(self, event: str, context: str = "") -> str:
         """Genererar prompt för AI att bygga en kausal kedja."""

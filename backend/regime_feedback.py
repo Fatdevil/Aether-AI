@@ -30,6 +30,14 @@ def _ensure_data_dir():
 
 def _load_feedback() -> dict:
     """Load saved feedback data."""
+    try:
+        from db import kv_get
+        data = kv_get("regime_feedback")
+        if data:
+            return data
+    except Exception:
+        pass
+    # Fallback to file
     if os.path.exists(FEEDBACK_FILE):
         try:
             with open(FEEDBACK_FILE, "r") as f:
@@ -41,10 +49,14 @@ def _load_feedback() -> dict:
 
 def _save_feedback(data: dict):
     """Save feedback data."""
-    _ensure_data_dir()
     data["last_updated"] = datetime.now().isoformat()
-    with open(FEEDBACK_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    try:
+        from db import kv_set
+        kv_set("regime_feedback", data)
+    except Exception:
+        _ensure_data_dir()
+        with open(FEEDBACK_FILE, "w") as f:
+            json.dump(data, f, indent=2)
 
 
 def analyze_regime_feedback() -> dict:

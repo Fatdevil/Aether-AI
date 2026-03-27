@@ -267,9 +267,14 @@ REGLER:
         return result
 
     def _save(self):
-        os.makedirs("data", exist_ok=True)
-        with open(SIMULATION_FILE, "w") as f:
-            json.dump([asdict(s) for s in self.simulations[-50:]], f, default=str)
+        data = [asdict(s) for s in self.simulations[-50:]]
+        try:
+            from db import kv_set
+            kv_set("actor_simulations", data)
+        except Exception:
+            os.makedirs("data", exist_ok=True)
+            with open(SIMULATION_FILE, "w") as f:
+                json.dump(data, f, default=str)
 
     def get_aggregated_actor_intelligence(self) -> Dict:
         if not self.simulations:

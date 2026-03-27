@@ -58,6 +58,14 @@ class NarrativeTracker:
         self._load()
 
     def _load(self):
+        try:
+            from db import kv_get
+            data = kv_get("narratives")
+            if data:
+                self.narratives = [Narrative(**n) for n in data]
+                return
+        except Exception:
+            pass
         if os.path.exists(NARRATIVE_FILE):
             try:
                 with open(NARRATIVE_FILE, "r") as f:
@@ -67,9 +75,14 @@ class NarrativeTracker:
                 pass
 
     def _save(self):
-        os.makedirs(os.path.dirname(NARRATIVE_FILE), exist_ok=True)
-        with open(NARRATIVE_FILE, "w") as f:
-            json.dump([asdict(n) for n in self.narratives[-100:]], f, default=str)
+        data = [asdict(n) for n in self.narratives[-100:]]
+        try:
+            from db import kv_set
+            kv_set("narratives", data)
+        except Exception:
+            os.makedirs(os.path.dirname(NARRATIVE_FILE), exist_ok=True)
+            with open(NARRATIVE_FILE, "w") as f:
+                json.dump(data, f, default=str)
 
     def build_narrative_prompt(self, market_context: str) -> str:
         """Prompt för AI att identifiera aktiva narrativ"""

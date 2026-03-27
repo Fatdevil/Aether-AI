@@ -28,6 +28,15 @@ class APICostTracker:
         self._load()
 
     def _load(self):
+        try:
+            from db import kv_get
+            data = kv_get("api_costs")
+            if data:
+                self.calls = data
+                return
+        except Exception:
+            pass
+        # Fallback to file
         if os.path.exists(COST_FILE):
             try:
                 with open(COST_FILE, "r") as f:
@@ -36,9 +45,14 @@ class APICostTracker:
                 self.calls = []
 
     def _save(self):
-        os.makedirs(os.path.dirname(COST_FILE), exist_ok=True)
-        with open(COST_FILE, "w") as f:
-            json.dump(self.calls[-10000:], f)  # Behåll senaste 10k
+        data = self.calls[-10000:]  # Keep last 10k
+        try:
+            from db import kv_set
+            kv_set("api_costs", data)
+        except Exception:
+            os.makedirs(os.path.dirname(COST_FILE), exist_ok=True)
+            with open(COST_FILE, "w") as f:
+                json.dump(data, f)
 
     def log_call(self, api: str, endpoint: str = "", tokens_in: int = 0, tokens_out: int = 0):
         cost = API_COSTS.get(api, 0.001)

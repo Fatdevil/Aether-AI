@@ -75,6 +75,15 @@ class EventDetector:
         self._load()
 
     def _load(self):
+        try:
+            from db import kv_get
+            data = kv_get("detected_events")
+            if data:
+                self.detected_events = [DetectedEvent(**e) for e in data[-500:]]
+                self.event_hashes = {self._hash_event(e.title) for e in self.detected_events}
+                return
+        except Exception:
+            pass
         if os.path.exists(EVENT_LOG_FILE):
             try:
                 with open(EVENT_LOG_FILE, "r") as f:
@@ -85,9 +94,14 @@ class EventDetector:
                 logger.error(f"Failed to load events: {e}")
 
     def _save(self):
-        os.makedirs(os.path.dirname(EVENT_LOG_FILE), exist_ok=True)
-        with open(EVENT_LOG_FILE, "w") as f:
-            json.dump([asdict(e) for e in self.detected_events[-500:]], f, default=str)
+        data = [asdict(e) for e in self.detected_events[-500:]]
+        try:
+            from db import kv_set
+            kv_set("detected_events", data)
+        except Exception:
+            os.makedirs(os.path.dirname(EVENT_LOG_FILE), exist_ok=True)
+            with open(EVENT_LOG_FILE, "w") as f:
+                json.dump(data, f, default=str)
 
     def _hash_event(self, title: str) -> str:
         normalized = title.lower().strip()
