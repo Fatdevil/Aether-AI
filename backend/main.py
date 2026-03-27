@@ -350,9 +350,9 @@ async def _run_full_pipeline() -> dict:
             recent_prices=recent_prices,
             daily_returns=daily_returns_dict,
             historical_std=historical_std,
-            agent_scores=agent_scores_current,
+            current_agent_scores=agent_scores_current,
             previous_agent_scores={},
-            existing_chains=existing_chains,
+            existing_chain_titles=existing_chains,
         )
 
         # AI-driven event analysis
