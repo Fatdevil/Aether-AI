@@ -151,6 +151,28 @@ class MarketActorSimulation:
     def __init__(self):
         self.archetypes = MARKET_ARCHETYPES
         self.simulations: List[SimulationResult] = []
+        self._load()
+
+    def _load(self):
+        """Load previous simulations from PostgreSQL KV store."""
+        try:
+            from db import kv_get
+            data = kv_get("actor_simulations")
+            if data:
+                self.simulations = [SimulationResult(**s) for s in data[-50:]]
+                logger.info(f"📦 Loaded {len(self.simulations)} actor simulations from DB")
+                return
+        except Exception as e:
+            logger.warning(f"⚠️ KV load actor_simulations failed: {e}")
+        # Fallback to file
+        if os.path.exists(SIMULATION_FILE):
+            try:
+                with open(SIMULATION_FILE, "r") as f:
+                    data = json.load(f)
+                    self.simulations = [SimulationResult(**s) for s in data[-50:]]
+                    logger.info(f"📁 Loaded {len(self.simulations)} actor simulations from file (fallback)")
+            except Exception as e:
+                logger.error(f"Failed to load actor simulations: {e}")
 
     def build_simulation_prompt(self, event: str, context: str = "") -> str:
         actor_descriptions = ""
@@ -271,7 +293,8 @@ REGLER:
         try:
             from db import kv_set
             kv_set("actor_simulations", data)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"⚠️ KV save actor_simulations failed ({e}), falling back to file")
             os.makedirs("data", exist_ok=True)
             with open(SIMULATION_FILE, "w") as f:
                 json.dump(data, f, default=str)

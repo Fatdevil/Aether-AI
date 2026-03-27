@@ -592,6 +592,23 @@ VIKTIGT:
             self.sectors.append(sector_obj)
             logger.info(f"  🏭 {info['emoji']} {info['name']}: {analysis['score']:+d} ({analysis.get('rotation_signal', 'N/A')})")
 
+            # Store sector analysis in persistent database
+            try:
+                store.store_sector_analysis(sector_id, {
+                    "name": info["name"],
+                    "category": "sector",
+                    "price": price_data.get("price", 0),
+                    "change_pct": price_data.get("change_pct", 0),
+                    "score": analysis.get("score", 0),
+                    "recommendation": analysis.get("rotation_signal", "Neutralvikt"),
+                    "reasoning": analysis.get("reasoning", ""),
+                    "confidence": analysis.get("confidence", 0.5),
+                    "provider": analysis.get("provider_used", "rule_based"),
+                    "analysis_type": "sector",
+                })
+            except Exception as e:
+                logger.warning(f"Failed to store sector analysis for {sector_id}: {e}")
+
         # Sort by score descending
         self.sectors.sort(key=lambda x: x["score"], reverse=True)
 
@@ -657,6 +674,23 @@ VIKTIGT:
             }
             self.regions.append(region_obj)
             logger.info(f"  🌍 {info['flag']} {info['name']}: {analysis['score']:+d} ({analysis.get('allocation_signal', 'N/A')})")
+
+            # Store region analysis in persistent database
+            try:
+                store.store_sector_analysis(region_id, {
+                    "name": info["name"],
+                    "category": "region",
+                    "price": price_data.get("price", 0),
+                    "change_pct": price_data.get("change_pct", 0),
+                    "score": analysis.get("score", 0),
+                    "recommendation": analysis.get("allocation_signal", "Neutralvikt"),
+                    "reasoning": analysis.get("reasoning", ""),
+                    "confidence": analysis.get("confidence", 0.5),
+                    "provider": analysis.get("provider_used", "rule_based"),
+                    "analysis_type": "region",
+                })
+            except Exception as e:
+                logger.warning(f"Failed to store region analysis for {region_id}: {e}")
 
         # Sort by score descending
         self.regions.sort(key=lambda x: x["score"], reverse=True)
