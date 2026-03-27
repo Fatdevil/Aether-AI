@@ -58,16 +58,16 @@ class _PgCursor:
             return self._results
         try:
             rows = self._cursor.fetchall()
-            return [dict(r) for r in rows]
+            return [_PgRowProxy(r) for r in rows]
         except Exception:
             return []
 
     def fetchone(self):
         if self._results is not None:
-            return self._results[0] if self._results else None
+            return _PgRowProxy(self._results[0]) if self._results else None
         try:
             row = self._cursor.fetchone()
-            return dict(row) if row else None
+            return _PgRowProxy(row) if row else None
         except Exception:
             return None
 
