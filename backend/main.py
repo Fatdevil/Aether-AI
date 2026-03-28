@@ -1387,6 +1387,140 @@ async def get_signal_weights_api():
         return {"error": str(e), "signal_weights": {}, "momentum_rankings": {}}
 
 
+# ===== Core-Satellite Portfolio =====
+
+@app.get("/api/core-satellite")
+async def get_core_satellite(
+    portfolio_value: float = 700000,
+    broker: str = "avanza",
+):
+    """
+    Hämta Core-Satellite portföljrekommendation anpassad till belopp OCH mäklare.
+
+    Query params:
+      portfolio_value: float (default 700000)
+      broker: "avanza" | "nordnet" (default "avanza")
+
+    Exempel:
+      /api/core-satellite?portfolio_value=100000   -> Mikro (3 fonder)
+      /api/core-satellite?portfolio_value=700000   -> Standard (5+4)
+      /api/core-satellite?portfolio_value=5000000  -> Large (8+6)
+      /api/core-satellite?portfolio_value=15000000 -> Institutional (10+8)
+    """
+    from portfolio_builder import CoreSatelliteBuilder
+    from broker_config import get_broker as get_broker_config, calculate_portfolio_courtage
+    from regime_detector import regime_detector
+
+    builder = CoreSatelliteBuilder()
+    broker_config = get_broker_config(broker)
+
+    # Hämta regim
+    regime_data = regime_detector.detect_regime()
+    regime = regime_data.get("regime", "neutral") if regime_data else "neutral"
+
+    # Hämta senaste synthesis-resultat (från Pipeline B)
+    final_scores = {}
+    consensus = {}
+    conviction = 0.7
+
+    if _last_pipeline_result:
+        synth = _last_pipeline_result.get("synthesis", {})
+        final_scores = synth.get("final_scores", {})
+        conviction = synth.get("conviction_ratio", 0.7)
+
+    # Fallback: bygg från data_service assets
+    for asset in data_service.assets:
+        aid = asset.get("id", "")
+        score = asset.get("finalScore", 0)
+        final_scores.setdefault(aid, score)
+        consensus.setdefault(aid, {
+            "consensus_fraction": 0.6 if abs(score) > 2 else 0.4,
+            "avg_score": score,
+        })
+
+    # Konvexa positioner
+    convex = []
+    try:
+        convex = event_tree_engine.get_all_convex_positions()
+    except Exception:
+        pass
+
+    # Risk status
+    trailing = False
+    try:
+        total_value = sum(
+            pr.get("price", 0) if isinstance(pr, dict) else pr
+            for pr in (data_service.prices or {}).values()
+        )
+        if total_value > 0:
+            trailing = risk_manager.update(total_value).get("stop_triggered", False)
+    except Exception:
+        pass
+
+    portfolio = builder.build_portfolio(
+        portfolio_value=portfolio_value,
+        regime=regime,
+        final_scores=final_scores,
+        consensus=consensus,
+        conviction_ratio=conviction,
+        convex_positions=convex,
+        trailing_stop_active=trailing,
+        broker_id=broker,
+    )
+
+    # Beräkna exakt courtage för hela portföljen
+    all_positions = portfolio["core"] + portfolio["satellites"]
+    courtage = calculate_portfolio_courtage(broker, all_positions)
+    portfolio["courtage_details"] = courtage
+    portfolio["broker"] = broker_config.name
+
+    return portfolio
+
+
+@app.get("/api/compare-brokers")
+async def compare_brokers(portfolio_value: float = 700000):
+    """Jämför courtage Avanza vs Nordnet för en given portföljstorlek."""
+    from portfolio_builder import CoreSatelliteBuilder
+    from broker_config import calculate_portfolio_courtage
+
+    builder = CoreSatelliteBuilder()
+
+    results = {}
+    for broker_id in ["avanza", "nordnet"]:
+        portfolio = builder.build_portfolio(
+            portfolio_value=portfolio_value,
+            broker_id=broker_id,
+            regime="neutral",
+        )
+        positions = portfolio["core"] + portfolio["satellites"]
+        cost = calculate_portfolio_courtage(broker_id, positions)
+        results[broker_id] = {
+            "name": cost["broker"],
+            "total_courtage_sek": cost["total_courtage_sek"],
+            "total_fx_fee_sek": cost["total_fx_fee_sek"],
+            "total_cost_sek": cost["total_cost_sek"],
+            "positions": len(positions),
+            "funds_used": sum(1 for p in positions if p.get("courtage_pct", 0) == 0),
+        }
+
+    av_cost = results["avanza"]["total_cost_sek"]
+    nn_cost = results["nordnet"]["total_cost_sek"]
+    if av_cost < nn_cost:
+        rec = f"Avanza är billigare ({av_cost:.0f} kr vs {nn_cost:.0f} kr) tack vare fler egna fonder med 0 kr courtage."
+    elif nn_cost < av_cost:
+        rec = f"Nordnet är billigare ({nn_cost:.0f} kr vs {av_cost:.0f} kr)."
+    else:
+        rec = "Lika kostnad. Välj baserat på plattform och funktioner."
+
+    return {
+        "portfolio_value": portfolio_value,
+        "avanza": results["avanza"],
+        "nordnet": results["nordnet"],
+        "recommendation": rec,
+        "note": "Valutaväxling 0.25% tillkommer på utlandshandel hos båda. Fonder har 0 kr courtage hos båda.",
+    }
+
+
 @app.get("/api/composite-portfolio")
 async def get_composite_portfolio():
     """Return AI composite portfolio backtest — regime-switching track record."""
