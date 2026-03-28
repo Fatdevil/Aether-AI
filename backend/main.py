@@ -2425,9 +2425,9 @@ async def test_pipeline_e2e():
             recent_prices=recent_prices,
             daily_returns={k: 0 for k in recent_prices},
             historical_std={k: 0.02 for k in recent_prices},
-            agent_scores=agent_scores_current,
+            current_agent_scores=agent_scores_current,
             previous_agent_scores={},
-            existing_chains=[],
+            existing_chain_titles=[],
         )
         detected_count = detection.get("total_detected", 0) + 1  # +1 for injected
 
