@@ -39,3 +39,4 @@ venv/
 
 # Cached data
 backend/data/*.json
+backend/data/historical/
