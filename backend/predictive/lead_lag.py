@@ -14,28 +14,34 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Kända lead-lag-relationer att testa
+# Data-validerade lead-lag-par (20 ars historisk data, 2005-2026)
+# Genererad av lead_lag_trainer.py — 6 par validerade av 380 testade
+# Kriterier: |korrelation| >= 0.20, stabil i >= 2/4 femarsperioder
+#
+# FALSIFIERADE hardkodade par (ej bevisade av data):
+#   us10y -> sp500 (|corr|=0.069), oil -> gold (0.027), us10y -> gold (0.119)
+#   gold -> btc (0.032), us10y -> btc (0.045), oil -> sp500 (0.066)
+#   eurusd -> gold (0.041), sp500 -> btc (0.037)
+#
 KNOWN_PAIRS = [
-    {"leader": "us10y", "follower": "sp500", "expected_direction": "INVERSE",
-     "description": "Stigande räntor trycker aktier (med fördröjning)"},
+    {"leader": "dxy", "follower": "eurusd", "expected_direction": "INVERSE",
+     "optimal_lag_days": 1, "historical_correlation": -0.272,
+     "stability": 3, "description": "DXY leder EUR/USD (omvänt, 1d lag) | Regim: RISK_ON, NEUTRAL, RISK_OFF"},
     {"leader": "gold", "follower": "silver", "expected_direction": "SAME",
-     "description": "Guld leder silver (men silver överskjuter)"},
-    {"leader": "oil", "follower": "gold", "expected_direction": "SAME",
-     "description": "Oljepris leder inflationshedge (guld)"},
-    {"leader": "us10y", "follower": "gold", "expected_direction": "INVERSE",
-     "description": "Stigande realräntor trycker guld"},
-    {"leader": "sp500", "follower": "global-equity", "expected_direction": "SAME",
-     "description": "US-marknaden leder globala aktier"},
-    {"leader": "gold", "follower": "btc", "expected_direction": "SAME",
-     "description": "Guld och Bitcoin som alternativa tillgångar"},
-    {"leader": "us10y", "follower": "btc", "expected_direction": "INVERSE",
-     "description": "Stigande räntor trycker riskfyllda tillgångar"},
-    {"leader": "oil", "follower": "sp500", "expected_direction": "INVERSE",
-     "description": "Stigande energikostnader trycker aktier"},
-    {"leader": "eurusd", "follower": "gold", "expected_direction": "SAME",
-     "description": "Svagare dollar = starkare guld"},
-    {"leader": "sp500", "follower": "btc", "expected_direction": "SAME",
-     "description": "Risk-on/off: BTC följer aktier med fördröjning"},
+     "optimal_lag_days": 1, "historical_correlation": 0.240,
+     "stability": 2, "description": "Guld leder silver (men silver överskjuter) | Regim: NEUTRAL, RISK_OFF, CRISIS"},
+    {"leader": "sp500", "follower": "omxs30", "expected_direction": "SAME",
+     "optimal_lag_days": 1, "historical_correlation": 0.218,
+     "stability": 3, "description": "US-marknaden leder Norden (tidszon-effekt) | Regim: NEUTRAL, RISK_OFF, CRISIS"},
+    {"leader": "sector-tech", "follower": "sp500", "expected_direction": "SAME",
+     "optimal_lag_days": 1, "historical_correlation": 0.212,
+     "stability": 2, "description": "Tech-sektorn leder breda marknaden | Regim: RISK_ON, RISK_OFF"},
+    {"leader": "region-europe", "follower": "omxs30", "expected_direction": "SAME",
+     "optimal_lag_days": 1, "historical_correlation": 0.206,
+     "stability": 3, "description": "Europa-ETF leder OMXS30 (tidszon-effekt) | Regim: NEUTRAL, RISK_OFF, CRISIS"},
+    {"leader": "vix", "follower": "sector-tech", "expected_direction": "INVERSE",
+     "optimal_lag_days": 1, "historical_correlation": -0.200,
+     "stability": 2, "description": "VIX-spike pressar tech (next-day) | Regim: NEUTRAL, RISK_OFF"},
 ]
 
 
