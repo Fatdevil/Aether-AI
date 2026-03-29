@@ -291,8 +291,9 @@ class SupervisorAgent(BaseAgent):
                 for actor_id, pred_data in pol_predictions.items():
                     for pred in pred_data.get("predictions", []):
                         pred_assets = pred.get("affected_assets", []) + pred.get("known_transmission_assets", [])
-                        if asset in pred_assets:
-                            est_impact = pred.get("estimated_impact", {})
+                        est_impact = pred.get("estimated_impact", {})
+                        # Match on explicit asset list OR estimated_impact keys
+                        if asset in pred_assets or (isinstance(est_impact, dict) and asset in est_impact):
                             if isinstance(est_impact, dict) and asset in est_impact:
                                 impact_pct = est_impact[asset]
                                 prob = pred.get("probability", 0.5)
