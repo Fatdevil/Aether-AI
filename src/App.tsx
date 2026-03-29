@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useLiveData } from './hooks/useLiveData';
 import { useNotifications } from './hooks/useNotifications';
 import Header from './components/Header';
@@ -19,11 +20,23 @@ import InvestorDemo from './pages/InvestorDemo';
 import GlobalOverviewPage from './pages/GlobalOverviewPage';
 import './index.css';
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+      retry: 2,
+    },
+  },
+});
+
 export default function App() {
   return (
-    <BrowserRouter>
-      <AppContent />
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AppContent />
+      </BrowserRouter>
+    </QueryClientProvider>
   );
 }
 
