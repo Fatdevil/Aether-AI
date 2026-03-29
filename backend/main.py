@@ -30,7 +30,8 @@ from multi_timeframe import MultiTimeframeConfirmation
 from api_cost_tracker import APICostTracker
 from predictive import (CausalChainEngine, EventTreeEngine, LeadLagDetector, NarrativeTracker,
                         PredictiveOrchestrator, MarketActorSimulation, ConvexityOptimizer,
-                        ConfidenceCalibrator, MetaStrategySelector, AdversarialAgent)
+                        ConfidenceCalibrator, MetaStrategySelector, AdversarialAgent,
+                        PoliticalIntelligenceEngine)
 from daily_scheduler import DailyScheduler
 from system_health import SystemHealthCheck
 from llm_provider import call_llm, call_llm_tiered, parse_llm_json
@@ -62,6 +63,7 @@ actor_sim = MarketActorSimulation()
 confidence_cal = ConfidenceCalibrator()
 meta_strategy = MetaStrategySelector()
 adversarial = AdversarialAgent()
+political_engine = PoliticalIntelligenceEngine()
 health_check = SystemHealthCheck()
 # ConvexityOptimizer initialized per-request (needs asset list)
 # DailyScheduler initialized after all modules
@@ -471,14 +473,50 @@ async def _run_full_pipeline() -> dict:
         if hasattr(actor_sim, 'last_simulation') and actor_sim.last_simulation:
             actor_sim_data = actor_sim.last_simulation.__dict__ if hasattr(actor_sim.last_simulation, '__dict__') else actor_sim.last_simulation
 
+        # Political Intelligence (rhetoric + behavior pattern matching)
+        political_result = {"actors_analyzed": [], "direct_signals": [], "prompts_for_ai": [], "overall_political_risk": "NORMAL"}
+        political_predictions = {}
+        try:
+            political_market_data = {
+                "sp500_change_7d": sum(returns_df.get("SP500", returns_df.iloc[:, 0]).tail(7).tolist()) if not returns_df.empty else 0,
+                "vix": prices.get("vix", {}).get("price", 20) if isinstance(prices.get("vix"), dict) else 20,
+            }
+            political_result = political_engine.analyze_daily(
+                news_summary=news_summary if 'news_summary' in dir() else news[:2000],
+                market_data=political_market_data,
+            )
+            # AI predictions only for actors with detected signals (cost-conscious)
+            for prompt_data in political_result.get("prompts_for_ai", []):
+                try:
+                    ai_resp_raw = await safe_pipeline_llm_call(
+                        "gemini",
+                        "Du ar en politisk marknadsanalytiker. Svara ENBART med JSON.",
+                        prompt_data["prompt"], temperature=0.3, max_tokens=2000
+                    )
+                    ai_parsed = parse_llm_json(ai_resp_raw)
+                    if ai_parsed:
+                        pred = political_engine.process_ai_predictions(prompt_data["actor_id"], ai_parsed)
+                        political_predictions[prompt_data["actor_id"]] = pred
+                except Exception as e:
+                    logger.warning(f"Political AI prediction failed for {prompt_data['actor_id']}: {e}")
+        except Exception as e:
+            logger.warning(f"Political intelligence failed: {e}")
+
         layers_log["L3_predictive"] = {
             "chains_active": len([c for c in predictor.causal_engine.active_chains if c.status == "ACTIVE"]),
             "convex_positions": len(convex),
             "lead_lag_signals": len(ll_signals),
             "narrative_signals": len(narr_signals),
             "actor_sim_available": actor_sim_data is not None,
+            "political": {
+                "actors_analyzed": len(political_result.get("actors_analyzed", [])),
+                "direct_signals": len(political_result.get("direct_signals", [])),
+                "ai_predictions": len(political_predictions),
+                "dominant_actor": political_result.get("dominant_actor"),
+                "political_risk": political_result.get("overall_political_risk", "NORMAL"),
+            },
         }
-        logger.info(f"🔮 L3 PREDICTIVE: {len(ll_signals)} lead-lag, {len(convex)} convex, {len(narr_signals)} narrative")
+        logger.info(f"🔮 L3 PREDICTIVE: {len(ll_signals)} lead-lag, {len(convex)} convex, {len(narr_signals)} narrative, {len(political_result.get('direct_signals', []))} political")
 
         # ================================================================
         # LAYER 4: ANALYSIS (Regime, Vol, Calendar, DomainKnowledge)
@@ -2274,6 +2312,22 @@ async def get_active_chains_full():
             "portfolio_impact": chain_dict.get("portfolio_impact", {}),
         })
     return {"chains": result, "total": len(result)}
+
+
+@app.get("/api/political-intelligence")
+async def get_political_intelligence():
+    """Political Intelligence dashboard — active actors, market bias, recent signals."""
+    try:
+        dashboard = political_engine.get_dashboard()
+        return dashboard
+    except Exception as e:
+        logger.error(f"Political intelligence API error: {e}")
+        return {
+            "market_bias": {"bias": "NEUTRAL", "confidence": 0},
+            "active_actors": [],
+            "recent_analyses": [],
+            "error": str(e),
+        }
 
 
 @app.get("/api/predictive/lead-lag/network")

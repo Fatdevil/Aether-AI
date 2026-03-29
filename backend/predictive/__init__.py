@@ -14,6 +14,7 @@ from .convexity_optimizer import ConvexityOptimizer
 from .confidence_calibrator import ConfidenceCalibrator
 from .meta_strategy import MetaStrategySelector
 from .adversarial_agent import AdversarialAgent
+from .political_intelligence import PoliticalIntelligenceEngine
 
 __all__ = [
     "CausalChainEngine",
