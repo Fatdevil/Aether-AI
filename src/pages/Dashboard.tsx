@@ -7,6 +7,7 @@ import AssetDetail from '../components/AssetDetail';
 import { CalendarWidget } from '../components/IntelligenceWidgets';
 import CorrelationHeatmap from '../components/CorrelationHeatmap';
 import TrendingWidget from '../components/TrendingWidget';
+import DualPortfolioPanel from '../components/DualPortfolioPanel';
 import { api } from '../api/client';
 
 // Predictive Pulse Widget for Dashboard
@@ -350,10 +351,13 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
 
       {/* Intelligence Widgets — Row 1: Compact Trio */}
       <div className="animate-fade-in" style={{ marginBottom: '1rem', animationDelay: '0.05s' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
-          <CalendarWidget />
-          <TrendingWidget />
-          <PredictivePulse />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
+            <CalendarWidget />
+            <TrendingWidget />
+            <PredictivePulse />
+          </div>
+          <DualPortfolioPanel />
         </div>
       </div>
 

@@ -317,6 +317,19 @@ async def background_predictive_loop():
                 except Exception:
                     pass
 
+            # Varje måndag: refresh scenarios + Omega portfolio
+            if datetime.now().weekday() == 0:
+                try:
+                    regime = "NEUTRAL"
+                    pol_state = political_engine.get_current_state()
+                    omega = await scenario_engine.refresh_scenarios(
+                        regime=regime,
+                        political_risk=pol_state.get("political_risk", "NORMAL"),
+                    )
+                    logger.info(f"🎯 Omega scenarios refreshed: {len(scenario_engine.scenarios)} scenarios, E(R)={omega.expected_return:.1%}")
+                except Exception as e:
+                    logger.debug(f"Scenario refresh: {e}")
+
         except Exception as e:
             logger.error(f"🤖 AUTONOM PIPELINE FEL: {e}", exc_info=True)
 

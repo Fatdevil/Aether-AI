@@ -326,6 +326,21 @@ class AetherAPI {
   async getNarratives(): Promise<any> {
     return this.fetch('/api/predictive/narratives');
   }
+
+  // ---- Alpha vs Omega: Dual Portfolio ----
+
+  async getDualPortfolio(): Promise<any> {
+    return this.fetch('/api/portfolio/dual');
+  }
+
+  async getScenarios(): Promise<any> {
+    return this.fetch('/api/portfolio/scenarios');
+  }
+
+  async refreshScenarios(): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/api/portfolio/scenarios/refresh`, { method: 'POST' });
+    return response.json();
+  }
 }
 
 // Intelligence types
