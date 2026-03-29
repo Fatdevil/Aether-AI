@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { useLiveData } from './hooks/useLiveData';
 import { useNotifications } from './hooks/useNotifications';
 import Header from './components/Header';
@@ -14,6 +14,7 @@ import BacktestPage from './pages/BacktestPage';
 import PredictivePage from './pages/PredictivePage';
 import ToolsPage from './pages/ToolsPage';
 import ChatPanel from './components/ChatPanel';
+import InvestorDemo from './pages/InvestorDemo';
 
 import GlobalOverviewPage from './pages/GlobalOverviewPage';
 import './index.css';
@@ -29,6 +30,12 @@ export default function App() {
 function AppContent() {
   const liveData = useLiveData();
   useNotifications();
+  const location = useLocation();
+
+  // Investor demo renders standalone (no app shell)
+  if (location.pathname === '/investor') {
+    return <InvestorDemo />;
+  }
 
   return (
     <div className="app-container">
