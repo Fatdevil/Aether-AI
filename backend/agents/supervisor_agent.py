@@ -272,7 +272,15 @@ class SupervisorAgent(BaseAgent):
             if political_signals:
                 pol_direct = political_signals.get("direct_signals", [])
                 pol_predictions = political_signals.get("predictions", {})
-                pol_weight = method_weights.get("political", 0.10)
+
+                # Dynamic weight based on political risk level
+                pol_risk = political_signals.get("political_risk", "NORMAL")
+                if pol_risk == "HIGH":
+                    pol_weight = 0.25  # Strong signal, clear direction
+                elif pol_risk == "ELEVATED":
+                    pol_weight = 0.15  # Indication but uncertain
+                else:
+                    pol_weight = 0.05  # Background noise
 
                 for sig in pol_direct:
                     affected = sig.get("affected_assets", [])

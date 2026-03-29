@@ -83,6 +83,25 @@ class NewsSentinel:
         if len(self._seen_titles) > 1000:
             self._seen_titles = set(list(self._seen_titles)[-500:])
 
+        # Political Intelligence v2: lazy-load engine for sentinel integration
+        political_engine = None
+        try:
+            import sys
+            main_mod = sys.modules.get("__main__")
+            if main_mod and hasattr(main_mod, "political_engine"):
+                political_engine = main_mod.political_engine
+            else:
+                pi_mod = sys.modules.get("predictive.political_intelligence")
+                if pi_mod and hasattr(pi_mod, "_sentinel_engine"):
+                    political_engine = pi_mod._sentinel_engine
+                else:
+                    from predictive.political_intelligence import PoliticalIntelligenceEngine
+                    political_engine = PoliticalIntelligenceEngine()
+                    if pi_mod:
+                        pi_mod._sentinel_engine = political_engine
+        except Exception as e:
+            logger.debug(f"Political engine not available: {e}")
+
         logger.info(f"🔍 Sentinel scanning {len(new_items)} new items...")
         new_alerts = []
 
@@ -99,6 +118,18 @@ class NewsSentinel:
                         self.alerts.append(alert)
                         new_alerts.append(alert)
                         self.stats["alerts_triggered"] += 1
+
+                        # Political Intelligence v2: match against power actors
+                        if political_engine:
+                            try:
+                                pol_signal = political_engine.process_sentinel_alert(alert)
+                                if pol_signal:
+                                    logger.info(
+                                        f"🏛️ Political: {pol_signal['actor_name']} "
+                                        f"{pol_signal['tone']} (impact={alert['impact_score']})"
+                                    )
+                            except Exception as pe:
+                                logger.debug(f"Political filter error: {pe}")
 
                         if alert["impact_score"] >= 7:
                             self.stats["critical_alerts"] += 1

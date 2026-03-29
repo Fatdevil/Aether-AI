@@ -1,28 +1,28 @@
 # ============================================================
-# FIL: backend/predictive/political_intelligence.py (NY FIL)
+# FIL: backend/predictive/political_intelligence.py
 #
-# POLITICAL INTELLIGENCE ENGINE
-# Generaliserad makthavaranalys for marknadspaverkan
+# POLITICAL INTELLIGENCE ENGINE v2
+# Lean, fast, Sentinel-integrated power-actor analysis
 #
-# PRINCIP: Politiska ledare foljer monster. Monstren ar
-# predicerbara. Marknadseffekterna av deras beslut ar
-# berakningsbara. Systemet ar AKTORS-AGNOSTISKT:
-# Trump, Powell, Lagarde, nasta president — samma ramverk.
+# v2 DESIGN:
+# 1. NewsSentinel (var 5 min) -> scorar nyheter med impact
+# 2. PoliticalFilter -> matchar mot aktorer via signal_phrases
+# 3. EscalationTracker -> raknar signal-ackumulering per aktor
+# 4. Supervisor laser get_current_state() -> portfoljjustering
 #
-# ARKITEKTUR:
-# 1. PoliticalActor: Dataclass per makthavare
-# 2. RhetoricAnalyzer: Analyserar uttalanden, tonforandringar
-# 3. BehaviorMatcher: Matchar mot historiska monster
-# 4. PolicyPredictor: Sannolikhet per mojligt beslut
-# 5. PoliticalIntelligenceEngine: Orchestrator
+# VAD SOM TAGITS BORT (vs v1):
+# - PolicyPredictor (AI-call som reformulerade existing data)
+# - BehaviorMatcher (komplex fasmatchning med sprakproblem)
+# - analyze_daily() nyhetsparser (duplicerade NewsSentinel)
 # ============================================================
 
 import json
 import os
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field, asdict
+from typing import Dict, List, Optional
+from dataclasses import dataclass, field
 from enum import Enum
+from collections import defaultdict
 import logging
 
 logger = logging.getLogger("aether.political_intelligence")
@@ -31,7 +31,7 @@ POLITICAL_DATA_FILE = "data/political_intelligence.json"
 
 
 # ============================================================
-# DEL 1: AKTORSTYPER OCH BETEENDEMODELLER
+# DEL 1: DATAMODELL (oforandrad fran v1)
 # ============================================================
 
 class ActorType(str, Enum):
@@ -64,7 +64,7 @@ class EscalationPhase(str, Enum):
 
 @dataclass
 class BehaviorPattern:
-    """Ett aterkommande beteendemonster for en makthavare."""
+    """Ett aterkommande beteendemonster for en makthavare (metadata only i v2)."""
     name: str
     description: str
     typical_duration_days: int
@@ -96,7 +96,7 @@ class PoliticalActor:
 
 
 # ============================================================
-# DEL 2: FORDEFINIERADE AKTORER
+# DEL 2: FORDEFINIERADE AKTORER (oforandrad)
 # ============================================================
 
 def create_default_actors() -> List[PoliticalActor]:
@@ -127,27 +127,27 @@ def create_default_actors() -> List[PoliticalActor]:
                 description="Oppnar extremt, skapar kaos, erbjuder deal som var malet fran borjan.",
                 typical_duration_days=21,
                 phases=[
-                    {"phase": "SIGNAL", "duration_days": 3, "description": "Aggressivt uttalande pa Truth Social / presstraff"},
-                    {"phase": "THREAT", "duration_days": 5, "description": "Konkret hot med deadline. Marknaden faller."},
-                    {"phase": "MARKET_REACTION", "duration_days": 3, "description": "SP500 -3 till -7%. Media panik."},
-                    {"phase": "BACKOFF_OR_ESCALATE", "duration_days": 5, "description": "Om SP500 faller >5%: backar. Annars: eskalerar."},
-                    {"phase": "RESOLUTION", "duration_days": 5, "description": "Deal som ar samre an status quo men battre an hotet."},
+                    {"phase": "SIGNAL", "duration_days": 3, "description": "Aggressivt uttalande"},
+                    {"phase": "THREAT", "duration_days": 5, "description": "Konkret hot med deadline"},
+                    {"phase": "MARKET_REACTION", "duration_days": 3, "description": "SP500 -3 till -7%"},
+                    {"phase": "BACKOFF_OR_ESCALATE", "duration_days": 5, "description": "Om SP500 -5%: backar"},
+                    {"phase": "RESOLUTION", "duration_days": 5, "description": "Deal samre an status quo"},
                 ],
-                trigger_conditions=["Handelsforhandling", "Bilateral relation", "Valnaerhet"],
-                backoff_conditions=["SP500 -5% pa 1 vecka", "Bipartisan kritik", "Fox News negativt"],
+                trigger_conditions=["trade", "tariff", "bilateral", "election"],
+                backoff_conditions=["SP500 -5% pa 1 vecka", "Bipartisan kritik"],
                 historical_frequency=0.75,
                 market_impact={"SIGNAL": -1.0, "THREAT": -3.0, "MARKET_REACTION": -2.0, "RESOLUTION": +4.0},
             ),
             BehaviorPattern(
                 name="Marknad-som-scorecard",
-                description="Trump anvaender SP500 som betyg. Stark bors = bra president. Backar vid borsfall.",
+                description="Trump anvaender SP500 som betyg. Backar vid borsfall.",
                 typical_duration_days=10,
                 phases=[
-                    {"phase": "ACTION", "duration_days": 1, "description": "Fattar beslut (tull, sanktion, uttalande)"},
-                    {"phase": "MARKET_REACTION", "duration_days": 3, "description": "Marknaden reagerar negativt"},
-                    {"phase": "BACKOFF_OR_ESCALATE", "duration_days": 5, "description": "Om SP500 -5%+: justerar beslutet."},
+                    {"phase": "ACTION", "duration_days": 1, "description": "Fattar beslut"},
+                    {"phase": "MARKET_REACTION", "duration_days": 3, "description": "Marknaden reagerar"},
+                    {"phase": "BACKOFF_OR_ESCALATE", "duration_days": 5, "description": "Om SP500 -5%+: justerar"},
                 ],
-                trigger_conditions=["SP500 faller >5% fran recent topp"],
+                trigger_conditions=["SP500 faller >5%"],
                 backoff_conditions=["SP500 aterhamtar", "Nyhetsagenda skiftar"],
                 historical_frequency=0.80,
                 market_impact={"ACTION": -2.0, "BACKOFF_OR_ESCALATE": +3.0},
@@ -166,10 +166,10 @@ def create_default_actors() -> List[PoliticalActor]:
             "great relationship": "STATUS_QUO -- ingen forandring vaentad",
         },
         backoff_triggers=[
-            {"trigger": "SP500 faller >5% pa <7 dagar", "probability": 0.70, "response": "Deeskalerar inom 5-10 dagar", "historical_examples": "Kina-tullar dec 2018, Iran jan 2020"},
-            {"trigger": "10Y yield stiger >30bps pa <5 dagar", "probability": 0.50, "response": "Trycker pa Fed, mildrar fiskal retorik"},
-            {"trigger": "Godkannandesiffror <40%", "probability": 0.60, "response": "Skiftar fokus till populara fragor"},
-            {"trigger": "Bipartisan kongresskritik", "probability": 0.40, "response": "Modifierar men backar sallan helt"},
+            {"trigger": "SP500 faller >5% pa <7 dagar", "probability": 0.70, "response": "Deeskalerar inom 5-10 dagar"},
+            {"trigger": "10Y yield stiger >30bps pa <5 dagar", "probability": 0.50, "response": "Trycker pa Fed"},
+            {"trigger": "Godkannandesiffror <40%", "probability": 0.60, "response": "Skiftar fokus"},
+            {"trigger": "Bipartisan kongresskritik", "probability": 0.40, "response": "Modifierar"},
         ],
         transmission_assets={
             PolicyArea.TRADE: ["SP500", "EEM", "EURUSD", "OMXS30", "XLK"],
@@ -194,32 +194,32 @@ def create_default_actors() -> List[PoliticalActor]:
         behavior_patterns=[
             BehaviorPattern(
                 name="Forward guidance-cykel",
-                description="Signalerar kommande beslut 2-6 veckor fore via tal och FOMC-minuter.",
+                description="Signalerar kommande beslut 2-6 veckor fore.",
                 typical_duration_days=42,
                 phases=[
-                    {"phase": "SIGNAL", "duration_days": 14, "description": "Tal med nya formuleringar. Marknaden tolkar."},
-                    {"phase": "THREAT", "duration_days": 14, "description": "FOMC-minuter bekraftar riktning."},
-                    {"phase": "ACTION", "duration_days": 1, "description": "Rantebeslut. Oftast redan prissatt."},
-                    {"phase": "RESOLUTION", "duration_days": 14, "description": "Ny forward guidance for nasta mote."},
+                    {"phase": "SIGNAL", "duration_days": 14, "description": "Tal med nya formuleringar"},
+                    {"phase": "THREAT", "duration_days": 14, "description": "FOMC-minuter bekraftar"},
+                    {"phase": "ACTION", "duration_days": 1, "description": "Rantebeslut"},
+                    {"phase": "RESOLUTION", "duration_days": 14, "description": "Ny guidance"},
                 ],
-                trigger_conditions=["Inflationsdata", "Arbetsmarknadsdata", "Finansiell stress"],
-                backoff_conditions=["Systemisk finansiell kris", "Politiskt tryck"],
+                trigger_conditions=["inflation", "employment", "financial stress"],
+                backoff_conditions=["Systemisk kris", "Politiskt tryck"],
                 historical_frequency=0.90,
                 market_impact={"SIGNAL": -0.5, "ACTION": -1.0, "RESOLUTION": +0.5},
             ),
         ],
         signal_phrases={
-            "data dependent": "AVVAKTAR -- inget forandrat sedan sist",
-            "considerable progress": "SNART_AKTION -- ranteandring trolig nasta mote",
+            "data dependent": "AVVAKTAR -- inget forandrat",
+            "considerable progress": "SNART_AKTION -- ranteandring trolig",
             "patient": "HALLER_FAST -- ingen forandring planerad",
             "meeting by meeting": "OSAKER -- kan ga bada hall",
             "determined": "HOJNING_TROLIG -- hawkish signal",
             "appropriate": "STANDARD -- foljer planen",
-            "closely monitoring": "BEREDD_AGERA -- redo att agera om data forsemras",
+            "closely monitoring": "BEREDD_AGERA -- redo att agera",
         },
         backoff_triggers=[
-            {"trigger": "VIX >35 + kreditspreadar vidgas >100bps", "probability": 0.80, "response": "Emergency rate cut eller likviditetsstod"},
-            {"trigger": "Arbetsloshet stiger >0.5% pa 3 manader", "probability": 0.70, "response": "Skiftar till dovish, sanker snabbare"},
+            {"trigger": "VIX >35 + kreditspreadar vidgas >100bps", "probability": 0.80, "response": "Emergency cut"},
+            {"trigger": "Arbetsloshet +0.5% pa 3 manader", "probability": 0.70, "response": "Skiftar dovish"},
         ],
         transmission_assets={PolicyArea.MONETARY: ["US10Y", "SP500", "GOLD", "BTC", "USDSEK", "EURUSD", "XLF"]},
     )
@@ -239,15 +239,15 @@ def create_default_actors() -> List[PoliticalActor]:
         behavior_patterns=[
             BehaviorPattern(
                 name="ECB forward guidance",
-                description="Liknande Fed men med storre intern oenighet (nordliga vs sydliga lander).",
+                description="Liknande Fed men med storre intern oenighet.",
                 typical_duration_days=42,
                 phases=[
                     {"phase": "SIGNAL", "duration_days": 14, "description": "Lagarde-tal + ECB blogginlagg"},
                     {"phase": "ACTION", "duration_days": 1, "description": "Rantebeslut"},
                     {"phase": "RESOLUTION", "duration_days": 14, "description": "Ny guidance"},
                 ],
-                trigger_conditions=["Eurozone CPI", "Tysk industriproduktion"],
-                backoff_conditions=["Europeisk bankstress", "Spridning Italia-Tyskland"],
+                trigger_conditions=["eurozone CPI", "german industrial"],
+                backoff_conditions=["European bank stress", "Italia-Tyskland spread"],
                 historical_frequency=0.85,
                 market_impact={"SIGNAL": -0.3, "ACTION": -0.8},
             ),
@@ -279,14 +279,14 @@ def create_default_actors() -> List[PoliticalActor]:
         behavior_patterns=[
             BehaviorPattern(
                 name="Riksbanken rantebesked",
-                description="Foljer i stort ECB men med lag till svensk data (fastighetsmarknad, SEK).",
+                description="Foljer i stort ECB men med lag till svensk data.",
                 typical_duration_days=56,
                 phases=[
                     {"phase": "SIGNAL", "duration_days": 21, "description": "Protokoll + tal"},
                     {"phase": "ACTION", "duration_days": 1, "description": "Rantebesked var 8:e vecka"},
                 ],
-                trigger_conditions=["KPIF-data", "SEK-kurs", "Bostadspriser"],
-                backoff_conditions=["SEK-kris (<9.0 EURSEK)", "Fastighetsmarknadskollaps"],
+                trigger_conditions=["KPIF", "SEK", "housing prices"],
+                backoff_conditions=["SEK-kris", "housing collapse"],
                 historical_frequency=0.85,
                 market_impact={"ACTION": -0.5},
             ),
@@ -315,15 +315,15 @@ def create_default_actors() -> List[PoliticalActor]:
         behavior_patterns=[
             BehaviorPattern(
                 name="Produktionsbeslut-cykel",
-                description="Manatliga moten. Internt spel Saudiarabien-Ryssland-UAE. Beslutet lackar 1-2d fore.",
+                description="Manatliga moten. Beslutet lackar 1-2d fore.",
                 typical_duration_days=30,
                 phases=[
-                    {"phase": "SIGNAL", "duration_days": 7, "description": "Lackor fran delegater, Reuters/Bloomberg"},
+                    {"phase": "SIGNAL", "duration_days": 7, "description": "Lackor fran delegater"},
                     {"phase": "ACTION", "duration_days": 1, "description": "Officiellt beslut"},
                     {"phase": "MARKET_REACTION", "duration_days": 3, "description": "Oljepris reagerar"},
                 ],
-                trigger_conditions=["Oljepris <$70", "Oljepris >$100"],
-                backoff_conditions=["USA hotar SPR-release", "Intern oenighet (UAE)"],
+                trigger_conditions=["oil price <$70", "oil price >$100"],
+                backoff_conditions=["US SPR release", "UAE internal conflict"],
                 historical_frequency=0.70,
                 market_impact={"ACTION": 3.0},
             ),
@@ -345,7 +345,7 @@ def create_default_actors() -> List[PoliticalActor]:
 
 
 # ============================================================
-# DEL 3: RETORISK ANALYSATOR
+# DEL 3: RETORISK ANALYSATOR (behalld fran v1 — 18/18 tester)
 # ============================================================
 
 class RhetoricAnalyzer:
@@ -439,221 +439,138 @@ class RhetoricAnalyzer:
 
 
 # ============================================================
-# DEL 4: BEHAVIOR MATCHER
+# DEL 4: ESCALATION TRACKER (NYTT i v2 — ersatter BehaviorMatcher)
 # ============================================================
 
-class BehaviorMatcher:
-    """Matchar nuvarande situation mot aktorers kanda beteendemonster."""
+class EscalationTracker:
+    """
+    Raknar signal-ackumulering per aktor over tid.
+    Ingen AI, ingen fasmatchning — bara matematik.
 
-    def match_patterns(self, actor: PoliticalActor, current_context: Dict,
-                       market_data: Dict = None) -> List[Dict]:
-        matches = []
+    Logik:
+    - Sparar senaste 20 signaler per aktor
+    - Om 3+ av senaste 10 ar ESCALATION och ratio > 2x DEESCALATION -> ESCALATING
+    - Om 3+ av senaste 10 ar DEESCALATION -> DEESCALATING
+    - Annars STABLE
+    """
 
-        for pattern in actor.behavior_patterns:
-            match_score = 0
-            current_phase = None
-            reasoning = []
+    def __init__(self):
+        self.signals: Dict[str, List[Dict]] = defaultdict(list)
+        self._max_history = 20
 
-            # Kolla trigger conditions
-            for trigger in pattern.trigger_conditions:
-                trigger_lower = trigger.lower()
-                context_str = json.dumps(current_context).lower()
-                if any(word in context_str for word in trigger_lower.split()):
-                    match_score += 0.3
-                    reasoning.append(f"Trigger matchar: {trigger}")
+    def track(self, actor_id: str, signal: Dict):
+        """Lagg till en ny signal for en aktor."""
+        signal["tracked_at"] = datetime.now().isoformat()
+        self.signals[actor_id].append(signal)
+        # Begrans historik
+        if len(self.signals[actor_id]) > self._max_history:
+            self.signals[actor_id] = self.signals[actor_id][-self._max_history:]
 
-            # Kolla backoff conditions
-            backoff_active = False
-            if market_data:
-                for backoff in pattern.backoff_conditions:
-                    backoff_lower = backoff.lower()
-                    if "sp500" in backoff_lower and "-5%" in backoff_lower:
-                        sp_change = market_data.get("sp500_change_7d", 0)
-                        if sp_change < -0.05:
-                            backoff_active = True
-                            reasoning.append(f"Backoff aktiv: SP500 {sp_change*100:.1f}% 7d")
+    def get_status(self, actor_id: str) -> Dict:
+        """Hamta eskaleringssstatus for en aktor."""
+        history = self.signals.get(actor_id, [])
+        if not history:
+            return {"status": "NO_DATA", "strength": 0, "signal_count": 0}
 
-            # Bedom vilken fas
-            rhetoric_tone = current_context.get("rhetoric_tone", "NEUTRAL")
-            if rhetoric_tone == "ESCALATION" and not backoff_active:
-                current_phase = "THREAT"
-                match_score += 0.3
-            elif rhetoric_tone == "DEESCALATION" or backoff_active:
-                current_phase = "RESOLUTION"
-                match_score += 0.2
-            elif rhetoric_tone == "NEUTRAL":
-                current_phase = "SIGNAL"
-                match_score += 0.1
+        recent = history[-10:]
+        esc_count = sum(1 for s in recent if s.get("tone") == "ESCALATION")
+        deesc_count = sum(1 for s in recent if s.get("tone") == "DEESCALATION")
+        neutral_count = len(recent) - esc_count - deesc_count
 
-            if match_score > 0.3:
-                phase_idx = None
-                for i, phase in enumerate(pattern.phases):
-                    if phase["phase"] == current_phase:
-                        phase_idx = i
-                        break
-
-                next_phase = None
-                if phase_idx is not None and phase_idx < len(pattern.phases) - 1:
-                    next_phase = pattern.phases[phase_idx + 1]
-
-                expected_impact = pattern.market_impact.get(
-                    next_phase["phase"] if next_phase else current_phase, 0
-                )
-
-                matches.append({
-                    "pattern": pattern.name,
-                    "match_score": round(match_score, 2),
-                    "current_phase": current_phase,
-                    "next_phase": next_phase["phase"] if next_phase else "END",
-                    "next_phase_description": next_phase["description"] if next_phase else "Monster avslutat",
-                    "estimated_days_to_next": next_phase["duration_days"] if next_phase else 0,
-                    "expected_market_impact_pct": expected_impact,
-                    "backoff_active": backoff_active,
-                    "confidence": round(match_score * pattern.historical_frequency, 2),
-                    "reasoning": reasoning,
-                })
-
-        matches.sort(key=lambda x: x["confidence"], reverse=True)
-        return matches
-
-
-# ============================================================
-# DEL 5: POLICY PREDICTOR
-# ============================================================
-
-class PolicyPredictor:
-    """Givet aktorens monster + signaler -> sannolikhet per beslut."""
-
-    def build_prediction_prompt(self, actor: PoliticalActor, context: str,
-                                rhetoric_analysis: Dict, pattern_matches: List[Dict],
-                                market_context: str = "") -> str:
-        patterns_str = ""
-        for m in pattern_matches[:3]:
-            patterns_str += f"\n- {m['pattern']}: fas={m['current_phase']}, nasta={m['next_phase']}, confidence={m['confidence']}"
-
-        signals_str = ""
-        for s in rhetoric_analysis.get("matched_signals", [])[:5]:
-            signals_str += f"\n- '{s['phrase']}' -> {s['interpretation']}"
-
-        return f"""Du ar en politisk analytiker som predicerar makthavares nasta beslut.
-
-AKTOR: {actor.name} ({actor.title})
-Typ: {actor.actor_type}
-Predicerbarhet: {actor.predictability:.0%}
-Marknadskansliglet: {actor.market_sensitivity:.0%}
-
-AKTUELL KONTEXT:
-{context}
-
-{f"MARKNADSKONTEXT: {market_context}" if market_context else ""}
-
-RETORISK ANALYS:
-Ton: {rhetoric_analysis.get('tone', 'NEUTRAL')}
-Eskaleringspoang: {rhetoric_analysis.get('escalation_score', 0)}
-Matchade signaler:{signals_str if signals_str else " Inga"}
-
-MONSTERMATCHNING:{patterns_str if patterns_str else " Inga aktiva monster"}
-
-BACKOFF-TRIGGERS for {actor.name}:
-{json.dumps([t['trigger'] + ' -> ' + t['response'] for t in actor.backoff_triggers], ensure_ascii=False, indent=2)}
-
-Svara ENBART med JSON:
-{{
-    "predictions": [
-        {{
-            "action": "Kort beskrivning av troligt beslut max 15 ord",
-            "policy_area": "TRADE|MONETARY|GEOPOLITICAL|REGULATORY|FISCAL|ENERGY",
-            "probability": 0.0-1.0,
-            "timeframe_days": 1-90,
-            "affected_assets": ["SP500", "GOLD", "OIL"],
-            "estimated_impact": {{"SP500": -3, "GOLD": 5, "OIL": 10}},
-            "confidence": "HIGH|MEDIUM|LOW",
-            "reasoning": "max 25 ord",
-            "what_changes_this": "Vad som skulle andra prediktionen max 15 ord"
-        }}
-    ],
-    "dominant_scenario": "Det mest sannolika utfallet max 30 ord",
-    "contrarian_view": "Vad om vi har fel? Max 25 ord",
-    "key_signal_to_watch": "En specifik sak att bevaka max 15 ord",
-    "overall_market_bias": "BULLISH|BEARISH|NEUTRAL",
-    "time_to_clarity_days": 1-30
-}}
-
-REGLER:
-- Max 4 prediktioner, rankat efter sannolikhet
-- Sannolikheter summerar INTE till 1.0 (oberoende handelser)
-- estimated_impact i PROCENT
-- Ta hansyn till backoff-triggers
-- Var REALISTISK med timeframes
-- BARA JSON"""
-
-    def parse_prediction(self, ai_response: Dict, actor: PoliticalActor) -> Dict:
-        """Parsar AI-svar och laggar till aktors-metadata."""
-        predictions = ai_response.get("predictions", [])
-
-        for pred in predictions:
-            policy = pred.get("policy_area", "")
-            if policy in actor.transmission_assets:
-                pred["known_transmission_assets"] = actor.transmission_assets[policy]
-            pred["actor_id"] = actor.id
-            pred["actor_name"] = actor.name
-            pred["actor_predictability"] = actor.predictability
+        if esc_count >= 3 and esc_count > deesc_count * 2:
+            status = "ESCALATING"
+            strength = esc_count / len(recent)
+        elif deesc_count >= 3 and deesc_count > esc_count * 2:
+            status = "DEESCALATING"
+            strength = deesc_count / len(recent)
+        else:
+            status = "STABLE"
+            strength = 0
 
         return {
-            "actor": actor.id,
-            "timestamp": datetime.now().isoformat(),
-            "predictions": predictions,
-            "dominant_scenario": ai_response.get("dominant_scenario", ""),
-            "contrarian_view": ai_response.get("contrarian_view", ""),
-            "key_signal": ai_response.get("key_signal_to_watch", ""),
-            "market_bias": ai_response.get("overall_market_bias", "NEUTRAL"),
-            "time_to_clarity": ai_response.get("time_to_clarity_days", 14),
+            "status": status,
+            "strength": round(strength, 2),
+            "signal_count": len(recent),
+            "escalation_count": esc_count,
+            "deescalation_count": deesc_count,
+            "neutral_count": neutral_count,
+            "latest_tone": recent[-1].get("tone", "NEUTRAL") if recent else "NEUTRAL",
         }
+
+    def get_all_statuses(self) -> Dict[str, Dict]:
+        """Hamta status for alla aktorer med signaler."""
+        return {aid: self.get_status(aid) for aid in self.signals}
+
+    def export(self) -> Dict:
+        """Exportera for persistens."""
+        return {aid: signals[-10:] for aid, signals in self.signals.items()}
+
+    def load(self, data: Dict):
+        """Ladda fran persistens."""
+        for aid, signals in data.items():
+            self.signals[aid] = signals
 
 
 # ============================================================
-# DEL 6: ENGINE (ORCHESTRATOR)
+# DEL 5: ENGINE (ORCHESTRATOR v2)
 # ============================================================
 
 class PoliticalIntelligenceEngine:
     """
-    Orchestrator for politisk intelligens.
-    Kors dagligen som del av L3 PREDICTIVE.
+    Orchestrator v2: Sentinel-driven politisk intelligens.
+
+    v1: Analyserade ratt nyhetstext i 6h-pipeline -> AI predictions
+    v2: Tar emot Sentinel-alerts (var 5 min) -> frasmatchning -> eskalationstracking
+        Supervisor laser get_current_state() utan AI-anrop.
     """
 
     def __init__(self):
         self.actors = {a.id: a for a in create_default_actors()}
         self.rhetoric = RhetoricAnalyzer()
-        self.behavior = BehaviorMatcher()
-        self.predictor = PolicyPredictor()
-        self.analysis_history: List[Dict] = []
+        self.tracker = EscalationTracker()
+        self.active_signals: List[Dict] = []  # Senaste 50 politiska signaler
+        self._max_signals = 50
         self._load()
 
     def _load(self):
+        """Ladda historik fran KV-store eller fil."""
         try:
             from db import kv_get
-            data = kv_get("political_intelligence")
+            data = kv_get("political_intelligence_v2")
             if data:
-                self.analysis_history = data.get("history", [])
+                self.active_signals = data.get("signals", [])
+                self.tracker.load(data.get("tracker", {}))
                 return
         except Exception:
             pass
         if os.path.exists(POLITICAL_DATA_FILE):
             try:
                 with open(POLITICAL_DATA_FILE, "r") as f:
-                    self.analysis_history = json.load(f)
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        self.active_signals = data.get("signals", [])
+                        self.tracker.load(data.get("tracker", {}))
+                    elif isinstance(data, list):
+                        # v1 format — ignore
+                        pass
             except Exception:
                 pass
 
     def _save(self):
-        data = {"history": self.analysis_history[-500:]}
+        """Spara till KV-store eller fil."""
+        data = {
+            "signals": self.active_signals[-self._max_signals:],
+            "tracker": self.tracker.export(),
+        }
         try:
             from db import kv_set
-            kv_set("political_intelligence", data)
+            kv_set("political_intelligence_v2", data)
         except Exception:
             os.makedirs("data", exist_ok=True)
             with open(POLITICAL_DATA_FILE, "w") as f:
-                json.dump(self.analysis_history[-500:], f, default=str)
+                json.dump(data, f, default=str)
+
+    # ----- PUBLIC API -----
 
     def get_active_actors(self) -> List[PoliticalActor]:
         return [a for a in self.actors.values() if a.active]
@@ -664,178 +581,242 @@ class PoliticalIntelligenceEngine:
         logger.info(f"Added political actor: {actor.name}")
 
     def deactivate_actor(self, actor_id: str):
-        """Inaktivera en aktor (t.ex. Trump nar han avgar)."""
+        """Inaktivera en aktor."""
         if actor_id in self.actors:
             self.actors[actor_id].active = False
             logger.info(f"Deactivated political actor: {actor_id}")
 
-    def analyze_daily(self, news_summary: str, market_data: Dict) -> Dict:
+    def process_sentinel_alert(self, alert: Dict) -> Optional[Dict]:
         """
-        HUVUDMETOD: Daglig politisk analys.
-        Anropas fran L3 PREDICTIVE.
+        HUVUDMETOD v2: Anropas av NewsSentinel vid impact >= 5.
+        Matchar mot aktorer via signal_phrases.
+        Returnerar political signal eller None.
 
-        Returns: prompts for AI + direkt-analyserbara resultat
-        """
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "actors_analyzed": [],
-            "prompts_for_ai": [],
-            "direct_signals": [],
-            "dominant_actor": None,
-            "overall_political_risk": "NORMAL",
+        Sentinel-alert-format:
+        {
+            "title": "...",
+            "impact_score": 7,
+            "category": "geopolitics",
+            "affected_assets": [{"id": "sp500", "direction": "down", "strength": "strong"}],
+            "urgency": "critical",
         }
+        """
+        title = alert.get("title", "")
+        if not title:
+            return None
+
+        best_match = None
+        best_signals = 0
 
         for actor in self.get_active_actors():
-            # Steg 1: Retorisk analys (kraver INTE AI)
-            rhetoric = self.rhetoric.analyze_statement(actor, news_summary)
-
-            # Hamta historik for tonal shift
-            actor_history = [
-                h.get("rhetoric", {})
-                for h in self.analysis_history
-                if h.get("actor") == actor.id
-            ]
-            tonal_shift = self.rhetoric.detect_tonal_shift(actor, actor_history)
-
-            # Steg 2: Monstermatchning (kraver INTE AI)
-            context = {
-                "recent_actions": news_summary[:500],
-                "rhetoric_tone": rhetoric["tone"],
-                "tonal_shift": tonal_shift["shift"],
-            }
-            pattern_matches = self.behavior.match_patterns(actor, context, market_data)
-
-            # Steg 3: Generera AI-prompt BARA om signaler hittats
-            if rhetoric["n_signals"] > 0 or len(pattern_matches) > 0:
-                prompt = self.predictor.build_prediction_prompt(
-                    actor=actor,
-                    context=news_summary[:1000],
-                    rhetoric_analysis=rhetoric,
-                    pattern_matches=pattern_matches,
-                    market_context=json.dumps(market_data)[:500] if market_data else "",
-                )
-                results["prompts_for_ai"].append({
+            rhetoric = self.rhetoric.analyze_statement(actor, title)
+            if rhetoric["n_signals"] > best_signals:
+                best_signals = rhetoric["n_signals"]
+                best_match = {
                     "actor_id": actor.id,
                     "actor_name": actor.name,
-                    "prompt": prompt,
-                })
+                    "tone": rhetoric["tone"],
+                    "escalation_score": rhetoric["escalation_score"],
+                    "matched_signals": rhetoric["matched_signals"],
+                    "n_signals": rhetoric["n_signals"],
+                    "sentinel_impact": alert.get("impact_score", 0),
+                    "sentinel_urgency": alert.get("urgency", "routine"),
+                    "sentinel_category": alert.get("category", "other"),
+                    "affected_assets": alert.get("affected_assets", []),
+                    "title": title,
+                    "timestamp": datetime.now().isoformat(),
+                }
 
-            # Direkta signaler (utan AI)
-            if tonal_shift["shift"] in ("ESCALATING", "DEESCALATING") and tonal_shift["confidence"] > 0.5:
-                results["direct_signals"].append({
-                    "actor": actor.name,
-                    "signal": tonal_shift["shift"],
-                    "confidence": tonal_shift["confidence"],
-                    "implication": tonal_shift["implication"],
-                    "affected_assets": list(set(
-                        a for assets in actor.transmission_assets.values() for a in assets
-                    )),
-                })
+        if best_match:
+            # Spara signal och uppdatera tracker
+            self.active_signals.append(best_match)
+            if len(self.active_signals) > self._max_signals:
+                self.active_signals = self.active_signals[-self._max_signals:]
 
-            if pattern_matches and pattern_matches[0]["confidence"] > 0.4:
-                best = pattern_matches[0]
-                results["direct_signals"].append({
-                    "actor": actor.name,
-                    "signal": f"Monster matchar: {best['pattern']}",
-                    "current_phase": best["current_phase"],
-                    "next_phase": best["next_phase"],
-                    "expected_impact": best["expected_market_impact_pct"],
-                    "confidence": best["confidence"],
-                    "days_to_next": best["estimated_days_to_next"],
-                })
-
-            results["actors_analyzed"].append({
-                "actor": actor.id,
-                "name": actor.name,
-                "rhetoric_tone": rhetoric["tone"],
-                "tonal_shift": tonal_shift["shift"],
-                "pattern_matches": len(pattern_matches),
-                "signals_detected": rhetoric["n_signals"],
+            self.tracker.track(best_match["actor_id"], {
+                "tone": best_match["tone"],
+                "escalation_score": best_match["escalation_score"],
+                "impact": best_match["sentinel_impact"],
             })
 
-        # Bestam dominant aktor och politisk risk
-        if results["direct_signals"]:
-            escalating = [s for s in results["direct_signals"] if "ESCALAT" in str(s.get("signal", ""))]
-            if len(escalating) >= 2:
-                results["overall_political_risk"] = "HIGH"
-            elif len(escalating) >= 1:
-                results["overall_political_risk"] = "ELEVATED"
+            self._save()
+            logger.info(
+                f"Political signal: {best_match['actor_name']} "
+                f"tone={best_match['tone']} signals={best_match['n_signals']} "
+                f"impact={best_match['sentinel_impact']}"
+            )
 
-        if results["actors_analyzed"]:
-            most_active = max(results["actors_analyzed"], key=lambda x: x["signals_detected"])
-            results["dominant_actor"] = most_active["name"]
+        return best_match
 
-        # Spara historik
-        self.analysis_history.append({
-            "timestamp": results["timestamp"],
-            "actors": results["actors_analyzed"],
-            "political_risk": results["overall_political_risk"],
-        })
-        self._save()
+    def get_current_state(self) -> Dict:
+        """
+        Anropas av pipeline:n (L3 PREDICTIVE).
+        Returnerar ackumulerat politiskt tillstand — INGA AI-anrop.
+        """
+        # Samla eskalationsstatus per aktor
+        actor_statuses = {}
+        for actor in self.get_active_actors():
+            status = self.tracker.get_status(actor.id)
+            if status["status"] != "NO_DATA":
+                actor_statuses[actor.id] = {
+                    "name": actor.name,
+                    "escalation": status["status"],
+                    "strength": status["strength"],
+                    "signal_count": status["signal_count"],
+                    "latest_tone": status["latest_tone"],
+                    "power": actor.power_concentration,
+                    "transmission_assets": {
+                        k.value if hasattr(k, 'value') else k: v
+                        for k, v in actor.transmission_assets.items()
+                    },
+                }
 
-        return results
+        # Bedom overall political risk
+        escalating_actors = [
+            a for a in actor_statuses.values()
+            if a["escalation"] == "ESCALATING"
+        ]
+        high_impact_recent = [
+            s for s in self.active_signals[-20:]
+            if s.get("sentinel_impact", 0) >= 7
+        ]
 
-    def process_ai_predictions(self, actor_id: str, ai_response: Dict) -> Dict:
-        """Parsa AI-svar for en aktor."""
-        actor = self.actors.get(actor_id)
-        if not actor:
-            return {"error": f"Unknown actor: {actor_id}"}
-        return self.predictor.parse_prediction(ai_response, actor)
+        if len(escalating_actors) >= 2 or len(high_impact_recent) >= 3:
+            political_risk = "HIGH"
+        elif len(escalating_actors) >= 1 or len(high_impact_recent) >= 1:
+            political_risk = "ELEVATED"
+        else:
+            political_risk = "NORMAL"
 
-    def get_aggregated_market_bias(self) -> Dict:
-        """Aggregera alla aktiva aktorers marknadspaverkan."""
-        recent = self.analysis_history[-10:]
+        # Bygg direct_signals for Supervisor (samma format som v1)
+        direct_signals = []
+        for actor_id, status in actor_statuses.items():
+            if status["escalation"] in ("ESCALATING", "DEESCALATING"):
+                # Samla alla affected_assets fran aktoren
+                all_assets = set()
+                for assets_list in status["transmission_assets"].values():
+                    all_assets.update(assets_list)
+
+                direct_signals.append({
+                    "actor": status["name"],
+                    "signal": status["escalation"],
+                    "confidence": status["strength"],
+                    "affected_assets": list(all_assets),
+                })
+
+        # Dominant actor
+        dominant = None
+        if actor_statuses:
+            most_signals = max(actor_statuses.values(), key=lambda x: x["signal_count"])
+            if most_signals["signal_count"] > 0:
+                dominant = most_signals["name"]
+
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "political_risk": political_risk,
+            "actor_statuses": actor_statuses,
+            "direct_signals": direct_signals,
+            "dominant_actor": dominant,
+            "recent_signals": self.active_signals[-5:],
+            "total_signals_tracked": len(self.active_signals),
+        }
+
+    def get_dashboard(self) -> Dict:
+        """API-endpoint data for /api/political-intelligence."""
+        state = self.get_current_state()
+        return {
+            "market_bias": self._compute_bias(),
+            "political_risk": state["political_risk"],
+            "active_actors": [
+                {
+                    "id": a.id,
+                    "name": a.name,
+                    "type": a.actor_type.value if hasattr(a.actor_type, 'value') else a.actor_type,
+                    "power_concentration": a.power_concentration,
+                    "predictability": a.predictability,
+                    "n_patterns": len(a.behavior_patterns),
+                    "n_signal_phrases": len(a.signal_phrases),
+                    "escalation": self.tracker.get_status(a.id),
+                }
+                for a in self.get_active_actors()
+            ],
+            "recent_signals": self.active_signals[-10:],
+            "total_signals": len(self.active_signals),
+            "dominant_actor": state["dominant_actor"],
+        }
+
+    def _compute_bias(self) -> Dict:
+        """Aggregera marknadsbias fran senaste signalerna."""
+        recent = self.active_signals[-20:]
         if not recent:
-            return {"bias": "NEUTRAL", "confidence": 0, "actors": []}
+            return {"bias": "NEUTRAL", "confidence": 0, "escalation_ratio": 0.0, "entries_analyzed": 0, "overall_risk": "NORMAL"}
 
-        escalation_count = 0
-        deescalation_count = 0
-        total_actors = 0
+        esc = sum(1 for s in recent if s.get("tone") == "ESCALATION")
+        deesc = sum(1 for s in recent if s.get("tone") == "DEESCALATION")
+        total = len(recent)
+        ratio = esc / max(total, 1)
 
-        for entry in recent:
-            for actor_data in entry.get("actors", []):
-                total_actors += 1
-                if actor_data.get("tonal_shift") == "ESCALATING":
-                    escalation_count += 1
-                elif actor_data.get("tonal_shift") == "DEESCALATING":
-                    deescalation_count += 1
-
-        if escalation_count > deescalation_count + 2:
+        if esc > deesc + 2:
             bias = "BEARISH"
-        elif deescalation_count > escalation_count + 2:
+        elif deesc > esc + 2:
             bias = "BULLISH"
         else:
             bias = "NEUTRAL"
 
         return {
             "bias": bias,
-            "escalation_ratio": round(escalation_count / max(total_actors, 1), 2),
-            "deescalation_ratio": round(deescalation_count / max(total_actors, 1), 2),
-            "entries_analyzed": len(recent),
-            "overall_risk": recent[-1].get("political_risk", "NORMAL") if recent else "NORMAL",
+            "confidence": round(abs(esc - deesc) / max(total, 1), 2),
+            "escalation_ratio": round(ratio, 2),
+            "entries_analyzed": total,
+            "overall_risk": self.get_current_state()["political_risk"],
         }
 
-    def get_dashboard(self) -> Dict:
-        """Full dashboard-data for API."""
-        bias = self.get_aggregated_market_bias()
-        actors_summary = []
-        for a in self.get_active_actors():
-            actors_summary.append({
-                "id": a.id,
-                "name": a.name,
-                "title": a.title,
-                "type": a.actor_type,
-                "power_concentration": a.power_concentration,
-                "predictability": a.predictability,
-                "market_sensitivity": a.market_sensitivity,
-                "n_patterns": len(a.behavior_patterns),
-                "n_signal_phrases": len(a.signal_phrases),
-                "n_policy_areas": len(a.policy_areas),
-                "active": a.active,
-            })
+    # Backwards-compatible methods
+
+    def analyze_daily(self, news_summary: str, market_data: Dict) -> Dict:
+        """
+        v1-kompatibel metod. Anvands i pipeline om Sentinel inte kort an.
+        Parser nyhetstext direkt (fallback).
+        """
+        for actor in self.get_active_actors():
+            rhetoric = self.rhetoric.analyze_statement(actor, news_summary)
+            if rhetoric["n_signals"] > 0:
+                self.tracker.track(actor.id, {
+                    "tone": rhetoric["tone"],
+                    "escalation_score": rhetoric["escalation_score"],
+                    "impact": 5,  # Default, no Sentinel score
+                })
+                self.active_signals.append({
+                    "actor_id": actor.id,
+                    "actor_name": actor.name,
+                    "tone": rhetoric["tone"],
+                    "n_signals": rhetoric["n_signals"],
+                    "matched_signals": rhetoric["matched_signals"],
+                    "sentinel_impact": 5,
+                    "timestamp": datetime.now().isoformat(),
+                    "title": news_summary[:100],
+                })
+
+        state = self.get_current_state()
+        # Return v1-compatible format for main.py
         return {
-            "market_bias": bias,
-            "active_actors": actors_summary,
-            "recent_analyses": self.analysis_history[-5:],
-            "total_analyses": len(self.analysis_history),
+            "timestamp": state["timestamp"],
+            "actors_analyzed": [
+                {
+                    "actor": a.id, "name": a.name,
+                    "rhetoric_tone": self.tracker.get_status(a.id).get("latest_tone", "NEUTRAL"),
+                    "tonal_shift": self.tracker.get_status(a.id).get("status", "STABLE"),
+                    "pattern_matches": 0,
+                    "signals_detected": self.tracker.get_status(a.id).get("signal_count", 0),
+                }
+                for a in self.get_active_actors()
+            ],
+            "prompts_for_ai": [],  # v2: no AI prompts
+            "direct_signals": state["direct_signals"],
+            "dominant_actor": state["dominant_actor"],
+            "overall_political_risk": state["political_risk"],
         }
+
+    def process_ai_predictions(self, actor_id: str, ai_response: Dict) -> Dict:
+        """v1-kompatibel stub. v2 gor inga AI-predictions."""
+        return {"actor": actor_id, "predictions": [], "note": "v2: AI predictions removed"}
