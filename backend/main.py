@@ -965,6 +965,44 @@ async def get_performance():
     return evaluator.get_performance_report()
 
 
+@app.get("/api/prices/history/{asset_id}")
+async def get_price_history(asset_id: str, period: str = "3mo"):
+    """Return OHLC price history for TradingView charts (yfinance)."""
+    from market_data import ASSET_TICKERS
+    import yfinance as yf
+
+    info = ASSET_TICKERS.get(asset_id)
+    if not info:
+        return {"error": f"Unknown asset: {asset_id}", "candles": []}
+
+    allowed = ["1mo", "3mo", "6mo", "1y", "2y"]
+    if period not in allowed:
+        period = "3mo"
+
+    try:
+        ticker = yf.Ticker(info["ticker"])
+        hist = ticker.history(period=period)
+        candles = []
+        for date, row in hist.iterrows():
+            candles.append({
+                "time": date.strftime("%Y-%m-%d"),
+                "open": round(float(row["Open"]), 4),
+                "high": round(float(row["High"]), 4),
+                "low": round(float(row["Low"]), 4),
+                "close": round(float(row["Close"]), 4),
+            })
+        return {
+            "asset_id": asset_id,
+            "name": info["name"],
+            "period": period,
+            "candles": candles,
+            "currency": info.get("currency", "$"),
+        }
+    except Exception as e:
+        logger.error(f"Price history error for {asset_id}: {e}")
+        return {"error": str(e), "candles": []}
+
+
 @app.get("/api/history/{asset_id}")
 async def get_history(asset_id: str, limit: int = 50):
     """Return analysis history for a specific asset."""

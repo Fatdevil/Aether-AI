@@ -341,6 +341,12 @@ class AetherAPI {
     const response = await fetch(`${this.baseUrl}/api/portfolio/scenarios/refresh`, { method: 'POST' });
     return response.json();
   }
+
+  // ---- Price History (TradingView charts) ----
+
+  async getPriceHistory(assetId: string, period: string = '3mo'): Promise<any> {
+    return this.fetch(`/api/prices/history/${assetId}?period=${period}`);
+  }
 }
 
 // Intelligence types

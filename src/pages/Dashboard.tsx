@@ -8,6 +8,7 @@ import { CalendarWidget } from '../components/IntelligenceWidgets';
 import CorrelationHeatmap from '../components/CorrelationHeatmap';
 import TrendingWidget from '../components/TrendingWidget';
 import DualPortfolioPanel from '../components/DualPortfolioPanel';
+import PriceChart from '../components/PriceChart';
 import { api } from '../api/client';
 
 // Predictive Pulse Widget for Dashboard
@@ -386,10 +387,19 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
           </div>
         </div>
 
-        {/* Detail Panel */}
+        {/* Detail Panel + Chart */}
         <div className="detail-col animate-fade-in" style={{ animationDelay: '0.2s' }}>
           {currentSelected && (
-            <AssetDetail asset={currentSelected} price={prices[currentSelected.id]} />
+            <>
+              <AssetDetail asset={currentSelected} price={prices[currentSelected.id]} />
+              <div style={{ marginTop: '1rem' }}>
+                <PriceChart
+                  assetId={currentSelected.id}
+                  assetName={currentSelected.name}
+                  height={280}
+                />
+              </div>
+            </>
           )}
         </div>
       </div>
