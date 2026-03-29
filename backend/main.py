@@ -2394,6 +2394,8 @@ async def get_political_intelligence():
             "market_bias": {"bias": "NEUTRAL", "confidence": 0},
             "active_actors": [],
             "recent_analyses": [],
+            "error": str(e),
+        }
 
 
 # ===== Alpha vs Omega: Dual Portfolio =====
@@ -2435,8 +2437,6 @@ async def refresh_scenarios():
         "n_scenarios": len(scenario_engine.scenarios),
         "omega_portfolio": scenario_engine.get_current_portfolio(),
     }
-            "error": str(e),
-        }
 
 
 @app.get("/api/predictive/lead-lag/network")
