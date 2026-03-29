@@ -78,25 +78,34 @@ class OmegaPortfolio:
 # SCENARIOGENERERING (1 Gemini-anrop/vecka)
 # ============================================================
 
-SCENARIO_PROMPT = """Du ar en makroekonomisk strateg. Generera 3-5 marknadscenarier
-for de kommande 6 manaderna baserat pa nuvarande marknadsdata.
+SCENARIO_PROMPT = """Du ar Chief Investment Officer pa varldens basta hedgefond.
+Du har full insyn i varldens marknader, geopolitik och makroekonomi.
+Du maste nu presentera 3-5 REALISTISKA scenarier for de kommande 6 manaderna
+och sta till svars for dina bedoymningar infor styrelsen.
+
+KRITISKT: Dina scenarier MASTE spegla det FAKTISKA varldsalaget JUST NU.
+Om det pagar krig, konflikter, tullar, sanktioner — da MASTE minst ett scenario
+direkt adressera dessa handelser och deras konsekvenser.
+Generiska scenarier som ignorerar pagaende kriser ar OACCEPTABLA.
 
 TILLGANGAR du maste inkludera i varje scenario:
 {assets}
 
+{current_context}
+
 For varje scenario, ange:
-- Namn (kort, beskrivande)
+- Namn (kort, beskrivande, pa engelska)
 - Sannolikhet (0.0-1.0, summa = 1.0)
-- Beskrivning (2-3 meningar)
+- Beskrivning (2-3 meningar PA SVENSKA som forklarar logiken)
 - Forvantad avkastning for varje tillgang (i decimal, t.ex. 0.08 = +8%)
 
 Svara ENBART med JSON:
 {{
     "scenarios": [
         {{
-            "name": "Soft Landing",
+            "name": "Scenario Name",
             "probability": 0.40,
-            "description": "Fed lyckas sanka inflation utan recession...",
+            "description": "Forklaring pa svenska...",
             "asset_returns": {{
                 "sp500": 0.08,
                 "gold": -0.02,
@@ -109,17 +118,20 @@ Svara ENBART med JSON:
 
 REGLER:
 - Sannolikheter MASTE summera till 1.0
-- Inkludera minst ett negativt scenario (recession/kris)
+- Inkludera minst ett negativt scenario (kris/eskalering/recession)
 - Avkastningar ska vara REALISTISKA (SP500 max +/-30%, Gold max +/-25%)
-- Varje tillgang maste ha en avkastning i VARJE scenario"""
+- Varje tillgang maste ha en avkastning i VARJE scenario
+- Scenarierna MASTE adressera de nyheter och konflikter som listas ovan"""
 
 
 async def generate_scenarios(
     regime: str = "NEUTRAL",
     political_risk: str = "NORMAL",
     market_data: dict = None,
+    news_headlines: list = None,
+    political_actors: list = None,
 ) -> List[Scenario]:
-    """Generate 3-5 market scenarios via Gemini (1 call/week)."""
+    """Generate 3-5 market scenarios via Gemini with LIVE world context."""
     try:
         from llm_provider import call_llm_tiered, parse_llm_json
     except ImportError:
@@ -128,22 +140,50 @@ async def generate_scenarios(
 
     assets_str = ", ".join(OMEGA_ASSETS)
 
-    context_parts = [f"Aktuellt regime: {regime}", f"Politisk risk: {political_risk}"]
+    # ---- Build rich context ----
+    context_lines = [
+        "=== AKTUELLT MARKNADSLAGE ===",
+        f"Regime: {regime}",
+        f"Politisk risk: {political_risk}",
+    ]
+
     if market_data:
         if "vix" in market_data:
-            context_parts.append(f"VIX: {market_data['vix']}")
+            context_lines.append(f"VIX: {market_data['vix']}")
         if "sp500_ytd" in market_data:
-            context_parts.append(f"SP500 YTD: {market_data['sp500_ytd']:.1%}")
+            context_lines.append(f"SP500 YTD: {market_data['sp500_ytd']:.1%}")
 
-    context = "\n".join(context_parts)
-    prompt = SCENARIO_PROMPT.format(assets=assets_str) + f"\n\nKONTEXT:\n{context}"
+    # ---- Inject live news ----
+    if news_headlines:
+        context_lines.append("")
+        context_lines.append("=== SENASTE NYHETER (HOGT IMPACT) ===")
+        for i, news in enumerate(news_headlines[:8], 1):
+            title = news.get("title", "") if isinstance(news, dict) else str(news)
+            impact = news.get("impact_score", "?") if isinstance(news, dict) else "?"
+            context_lines.append(f"{i}. [Impact {impact}] {title}")
+        context_lines.append("")
+        context_lines.append("VIKTIGT: Dessa nyheter MASTE paverka dina scenarier.")
+        context_lines.append("Ignorera dem INTE — en CIO som missar pagaende konflikter far sparken.")
+
+    # ---- Inject political actor state ----
+    if political_actors:
+        context_lines.append("")
+        context_lines.append("=== POLITISKA AKTORER ===")
+        for actor in political_actors[:5]:
+            if isinstance(actor, dict):
+                name = actor.get("actor", actor.get("name", "?"))
+                signals = actor.get("signal_count", actor.get("signals", 0))
+                context_lines.append(f"- {name}: {signals} signaler")
+
+    context = "\n".join(context_lines)
+    prompt = SCENARIO_PROMPT.format(assets=assets_str, current_context=context)
 
     response, provider = await call_llm_tiered(
-        1,  # Tier 1 (Flash) — cheap, sufficient for scenarios
-        "Du ar en makroekonomisk strateg. Svara ENBART med JSON.",
+        1,  # Tier 1 (Flash)
+        "Du ar Chief Investment Officer. Svara ENBART med JSON. Alla beskrivningar PA SVENSKA.",
         prompt,
         temperature=0.4,
-        max_tokens=2000,
+        max_tokens=2500,
     )
 
     if not response:
@@ -180,7 +220,7 @@ async def generate_scenarios(
         for s in scenarios:
             s.probability = round(s.probability / total_prob, 3)
 
-    logger.info(f"Generated {len(scenarios)} scenarios via {provider}")
+    logger.info(f"Generated {len(scenarios)} context-aware scenarios via {provider}")
     return scenarios
 
 
@@ -445,6 +485,8 @@ class ScenarioEngine:
         regime: str = "NEUTRAL",
         political_risk: str = "NORMAL",
         market_data: dict = None,
+        news_headlines: list = None,
+        political_actors: list = None,
         force: bool = False,
     ) -> OmegaPortfolio:
         """Generate new scenarios and optimize Omega portfolio."""
@@ -459,9 +501,13 @@ class ScenarioEngine:
             except Exception:
                 pass
 
-        # Step 1: Generate scenarios
-        logger.info("Generating new market scenarios...")
-        self.scenarios = await generate_scenarios(regime, political_risk, market_data)
+        # Step 1: Generate scenarios with FULL world context
+        logger.info("Generating new context-aware market scenarios...")
+        self.scenarios = await generate_scenarios(
+            regime, political_risk, market_data,
+            news_headlines=news_headlines,
+            political_actors=political_actors,
+        )
 
         if not self.scenarios:
             logger.warning("No scenarios generated, using fallback")

@@ -2424,18 +2424,46 @@ async def get_scenarios():
 
 @app.post("/api/portfolio/scenarios/refresh")
 async def refresh_scenarios():
-    """Force-refresh scenarios and regenerate Omega portfolio."""
+    """Force-refresh scenarios with LIVE world context."""
     regime = data_service.regime.get("current", "NEUTRAL") if hasattr(data_service, 'regime') else "NEUTRAL"
     pol_state = political_engine.get_current_state()
+
+    # Gather live news (high impact)
+    news_headlines = []
+    try:
+        from news_sentinel import sentinel
+        alerts = sentinel.get_alerts(limit=10)
+        news_headlines = [
+            {"title": a.get("title", ""), "impact_score": a.get("impact_score", 0)}
+            for a in alerts
+            if a.get("impact_score", 0) >= 5
+        ][:8]
+    except Exception:
+        pass
+
+    # Gather political actors
+    political_actors = []
+    try:
+        dashboard = political_engine.get_dashboard()
+        political_actors = dashboard.get("active_actors", [])
+    except Exception:
+        pass
+
     result = await scenario_engine.refresh_scenarios(
         regime=regime,
         political_risk=pol_state.get("political_risk", "NORMAL"),
+        news_headlines=news_headlines,
+        political_actors=political_actors,
         force=True,
     )
     return {
         "status": "refreshed",
         "n_scenarios": len(scenario_engine.scenarios),
         "omega_portfolio": scenario_engine.get_current_portfolio(),
+        "context_used": {
+            "news_count": len(news_headlines),
+            "actors_count": len(political_actors),
+        },
     }
 
 
