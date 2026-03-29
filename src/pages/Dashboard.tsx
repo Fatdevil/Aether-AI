@@ -9,6 +9,7 @@ import CorrelationHeatmap from '../components/CorrelationHeatmap';
 import TrendingWidget from '../components/TrendingWidget';
 import DualPortfolioPanel from '../components/DualPortfolioPanel';
 import PriceChart from '../components/PriceChart';
+import DailyBrief from '../components/DailyBrief';
 import { api } from '../api/client';
 
 // Predictive Pulse Widget for Dashboard
@@ -138,6 +139,11 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
 
   return (
     <main className="container" style={{ paddingTop: '2rem', paddingBottom: '6rem' }}>
+
+      {/* Opus Daily Brief — Top of Dashboard */}
+      <div style={{ marginBottom: '1.5rem' }}>
+        <DailyBrief />
+      </div>
 
       {/* Supervisor Summary — Redesigned */}
       <section className="glass-panel animate-fade-in" style={{ padding: '1.75rem 2rem', marginBottom: '2rem' }}>

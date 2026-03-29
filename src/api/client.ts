@@ -347,6 +347,22 @@ class AetherAPI {
   async getPriceHistory(assetId: string, period: string = '3mo'): Promise<any> {
     return this.fetch(`/api/prices/history/${assetId}?period=${period}`);
   }
+
+  // ---- Daily Brief (Opus-powered) ----
+
+  async getLatestBrief(type?: string): Promise<any> {
+    const url = type ? `/api/brief/latest?type=${type}` : '/api/brief/latest';
+    return this.fetch(url);
+  }
+
+  async generateBrief(type: string = 'morning'): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/api/brief/generate?type=${type}`, { method: 'POST' });
+    return response.json();
+  }
+
+  async getBriefHistory(limit: number = 14): Promise<any> {
+    return this.fetch(`/api/brief/history?limit=${limit}`);
+  }
 }
 
 // Intelligence types

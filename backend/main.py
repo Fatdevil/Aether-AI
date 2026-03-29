@@ -36,6 +36,7 @@ from daily_scheduler import DailyScheduler
 from system_health import SystemHealthCheck
 from llm_provider import call_llm, call_llm_tiered, parse_llm_json
 from analysis_store import store as analysis_store
+from daily_brief import daily_brief_engine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("aether")
@@ -329,6 +330,28 @@ async def background_predictive_loop():
                     logger.info(f"🎯 Omega scenarios refreshed: {len(scenario_engine.scenarios)} scenarios, E(R)={omega.expected_return:.1%}")
                 except Exception as e:
                     logger.debug(f"Scenario refresh: {e}")
+
+            # Daily briefs (09:00 CET morning, 22:30 CET evening)
+            try:
+                from datetime import timezone, timedelta
+                cet_now = datetime.now(timezone(timedelta(hours=2)))
+                hour = cet_now.hour
+
+                # Morning brief: generate between 08:00-10:00 CET
+                if 8 <= hour <= 10:
+                    date_key = cet_now.strftime("%Y-%m-%d")
+                    if f"{date_key}_morning" not in daily_brief_engine.briefs:
+                        brief = await daily_brief_engine.generate_brief("morning")
+                        logger.info(f"☀ Morning brief: {brief.get('content', {}).get('headline', '?')}")
+
+                # Evening brief: generate between 22:00-23:59 CET
+                if 22 <= hour <= 23:
+                    date_key = cet_now.strftime("%Y-%m-%d")
+                    if f"{date_key}_evening" not in daily_brief_engine.briefs:
+                        brief = await daily_brief_engine.generate_brief("evening")
+                        logger.info(f"🌙 Evening brief: {brief.get('content', {}).get('headline', '?')}")
+            except Exception as e:
+                logger.debug(f"Daily brief: {e}")
 
         except Exception as e:
             logger.error(f"🤖 AUTONOM PIPELINE FEL: {e}", exc_info=True)
@@ -2465,6 +2488,33 @@ async def refresh_scenarios():
             "actors_count": len(political_actors),
         },
     }
+
+
+# ===== Daily Brief (Opus-powered) =====
+
+@app.get("/api/brief/latest")
+async def get_latest_brief(type: str = None):
+    """Return the most recent daily brief (morning or evening)."""
+    brief = daily_brief_engine.get_latest(brief_type=type)
+    if not brief:
+        return {"error": "No briefs generated yet", "brief": None}
+    return {"brief": brief}
+
+
+@app.post("/api/brief/generate")
+async def generate_brief(type: str = "morning"):
+    """Force-generate a daily brief (morning or evening) using Opus."""
+    if type not in ("morning", "evening"):
+        type = "morning"
+    brief = await daily_brief_engine.generate_brief(brief_type=type, force=True)
+    return {"brief": brief}
+
+
+@app.get("/api/brief/history")
+async def get_brief_history(limit: int = 14):
+    """Return recent briefs (default: last 7 days = 14 briefs)."""
+    briefs = daily_brief_engine.get_all(limit=limit)
+    return {"briefs": briefs, "total": len(briefs)}
 
 
 @app.get("/api/predictive/lead-lag/network")
