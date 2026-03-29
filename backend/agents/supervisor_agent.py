@@ -75,6 +75,89 @@ class SupervisorAgent(BaseAgent):
         self.meta_weights = weights
         logger.info(f"  ⚖️ Meta-weights updated: {list(weights.keys())}")
 
+    def _load_regime_weights(self, regime: str) -> dict:
+        """
+        Load regime-specific signal weights (Fas 5 Steg 4).
+        Priority:
+          1. Trained joblib model → extract feature-group weights
+          2. MetaStrategy self.meta_weights (from feedback loop)
+          3. Hardcoded defaults
+        Always returns a valid dict. Never crashes.
+        """
+        # Hardcoded defaults (data-validated, Steg 4)
+        DEFAULTS = {
+            "agents": 0.30, "causal": 0.25, "lead_lag": 0.10,
+            "narrative": 0.05, "convexity": 0.15, "actor_sim": 0.15,
+        }
+
+        # Map regime name to joblib filename
+        regime_key = regime.lower().replace("-", "_")
+        regime_file_map = {
+            "risk_on": "signal_weights_risk_on.joblib",
+            "risk-on": "signal_weights_risk_on.joblib",
+            "neutral": "signal_weights_neutral.joblib",
+            "risk_off": "signal_weights_risk_off.joblib",
+            "risk-off": "signal_weights_risk_off.joblib",
+            "crisis": "signal_weights_risk_off.joblib",  # CRISIS uses RISK_OFF model
+        }
+
+        joblib_name = regime_file_map.get(regime_key)
+        if not joblib_name:
+            joblib_name = regime_file_map.get(regime, "signal_weights_single.joblib")
+
+        # Try loading trained model
+        try:
+            import joblib
+            model_path = os.path.join(os.path.dirname(__file__), "..", "models", joblib_name)
+            if os.path.exists(model_path):
+                model = joblib.load(model_path)
+                if hasattr(model, 'coef_'):
+                    # Map Ridge coefficients to method weight categories
+                    # Features: sp500_roc_10d, sp500_roc_20d, sp500_momentum_50d, sp500_vol_20d,
+                    #           vix_level, vix_change_5d, us10y_level, us10y_change_20d,
+                    #           gold_roc_10d, gold_vs_sp500_20d, oil_roc_10d, dxy_roc_10d,
+                    #           hyg_roc_10d, copper_roc_10d, em_vs_sp500_20d
+                    coefs = model.coef_
+                    abs_coefs = abs(coefs)
+                    total_abs = abs_coefs.sum() if abs_coefs.sum() > 0 else 1.0
+
+                    # Group features by method category:
+                    # agents (0-3): sp500 ROC/momentum/vol → base agent signals
+                    # causal (4-7): vix, us10y → macro drivers = causal chains
+                    # lead_lag (8-11): gold, oil, dxy → cross-asset → lead-lag
+                    # narrative (12): hyg → credit sentiment
+                    # convexity (13-14): copper, EM → tail risk / opportunity
+                    agents_w = float(abs_coefs[0:4].sum() / total_abs)
+                    causal_w = float(abs_coefs[4:8].sum() / total_abs)
+                    lead_lag_w = float(abs_coefs[8:12].sum() / total_abs)
+                    narrative_w = float(abs_coefs[12:13].sum() / total_abs) if len(abs_coefs) > 12 else 0.05
+                    convexity_w = float(abs_coefs[13:15].sum() / total_abs) if len(abs_coefs) > 13 else 0.10
+
+                    # actor_sim gets minimum floor
+                    actor_sim_w = max(0.05, 1.0 - agents_w - causal_w - lead_lag_w - narrative_w - convexity_w)
+
+                    weights = {
+                        "agents": round(agents_w, 3),
+                        "causal": round(causal_w, 3),
+                        "lead_lag": round(lead_lag_w, 3),
+                        "narrative": round(narrative_w, 3),
+                        "convexity": round(convexity_w, 3),
+                        "actor_sim": round(actor_sim_w, 3),
+                    }
+                    logger.info(f"  📊 Loaded trained weights for {regime}: {weights}")
+                    return weights
+        except Exception as e:
+            logger.warning(f"  ⚠️ Failed to load regime weights from {joblib_name}: {e}")
+
+        # Fallback 2: MetaStrategy weights (from feedback loop)
+        if regime in self.meta_weights:
+            logger.info(f"  ⚖️ Using MetaStrategy weights for {regime}")
+            return self.meta_weights[regime]
+
+        # Fallback 3: hardcoded defaults
+        logger.info(f"  📋 Using default weights for {regime}")
+        return DEFAULTS
+
     async def synthesize(
         self,
         # EXISTING INPUTS
@@ -129,15 +212,9 @@ class SupervisorAgent(BaseAgent):
 
         consensus = self.tango_filter.compute_consensus(tango_input)
 
-        # Step 3: Get method weights from MetaStrategy (per regime)
-        method_weights = self.meta_weights.get(regime, {
-            "agents": 0.30,
-            "causal": 0.25,
-            "lead_lag": 0.15,
-            "narrative": 0.10,
-            "convexity": 0.15,
-            "actor_sim": 0.05,
-        })
+        # Step 3: Get method weights — try trained regime-specific weights first,
+        # fall back to MetaStrategy, then hardcoded defaults
+        method_weights = self._load_regime_weights(regime)
 
         # Step 4: Build final score per asset
         final_scores = {}

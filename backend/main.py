@@ -483,8 +483,13 @@ async def _run_full_pipeline() -> dict:
         # ================================================================
         # LAYER 4: ANALYSIS (Regime, Vol, Calendar, DomainKnowledge)
         # ================================================================
-        # Regime detection
-        regime_data = regime_detector.detect_regime()
+        # Regime detection — ML primary, rule-based fallback
+        try:
+            from regime_classifier import detect_regime_with_fallback
+            regime_data = detect_regime_with_fallback()
+        except Exception as e:
+            logger.warning(f"ML regime detection import failed: {e}, using rule-based")
+            regime_data = regime_detector.detect_regime()
         current_regime = regime_data.get("regime", "neutral") if regime_data else "neutral"
 
         # Volatility adjustment (ATR-based)

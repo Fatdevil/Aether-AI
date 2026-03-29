@@ -20,11 +20,16 @@ META_FILE = "data/meta_strategy.json"
 METHODS = ["causal_chain", "event_tree", "lead_lag", "narrative", "actor_sim"]
 REGIMES = ["RISK_ON", "NEUTRAL", "RISK_OFF", "CRISIS"]
 
+# Data-validerade vikter (Fas 5 Steg 4, mars 2026)
+# Motivering:
+#   - causal_chain/event_tree hoga: regimklassificeraren (72% OOS) validerar domandrivna signaler
+#   - lead_lag laga: svaga korrelationer (0.20-0.27), mest tidszon-effekter
+#   - narrative: kvalitativ, svar att validera historiskt
 DEFAULT_WEIGHTS = {
-    "RISK_ON":   {"causal_chain": 0.15, "event_tree": 0.15, "lead_lag": 0.30, "narrative": 0.25, "actor_sim": 0.15},
-    "NEUTRAL":   {"causal_chain": 0.20, "event_tree": 0.20, "lead_lag": 0.25, "narrative": 0.20, "actor_sim": 0.15},
-    "RISK_OFF":  {"causal_chain": 0.30, "event_tree": 0.25, "lead_lag": 0.15, "narrative": 0.15, "actor_sim": 0.15},
-    "CRISIS":    {"causal_chain": 0.35, "event_tree": 0.30, "lead_lag": 0.10, "narrative": 0.05, "actor_sim": 0.20},
+    "RISK_ON":   {"causal_chain": 0.25, "event_tree": 0.20, "lead_lag": 0.10, "narrative": 0.10, "actor_sim": 0.35},
+    "NEUTRAL":   {"causal_chain": 0.25, "event_tree": 0.25, "lead_lag": 0.10, "narrative": 0.10, "actor_sim": 0.30},
+    "RISK_OFF":  {"causal_chain": 0.30, "event_tree": 0.25, "lead_lag": 0.10, "narrative": 0.05, "actor_sim": 0.30},
+    "CRISIS":    {"causal_chain": 0.35, "event_tree": 0.30, "lead_lag": 0.05, "narrative": 0.05, "actor_sim": 0.25},
 }
 
 
