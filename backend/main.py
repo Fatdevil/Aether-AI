@@ -597,6 +597,11 @@ async def _run_full_pipeline() -> dict:
             actor_sim_result=actor_sim_data,
             domain_knowledge=domain_context,
             calibration_adjustment=confidence_cal.adjust_probability,
+            political_signals={
+                "direct_signals": political_result.get("direct_signals", []),
+                "predictions": political_predictions,
+                "political_risk": political_result.get("overall_political_risk", "NORMAL"),
+            } if political_result.get("direct_signals") or political_predictions else None,
         )
 
         final_scores = synthesis.get("final_scores", {})

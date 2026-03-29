@@ -173,6 +173,7 @@ class SupervisorAgent(BaseAgent):
         actor_sim_result: dict = None,
         domain_knowledge: str = "",
         calibration_adjustment=None,   # callable from ConfidenceCalibrator
+        political_signals: dict = None, # From PoliticalIntelligenceEngine
     ) -> dict:
         """
         CENTRAL SYNTHESIS METHOD — Pipeline B (6h autonomous)
@@ -266,6 +267,36 @@ class SupervisorAgent(BaseAgent):
                     sim_impact = net_impacts[asset]
                     if isinstance(sim_impact, (int, float)):
                         score += sim_impact * 0.3 * method_weights.get("actor_sim", 0.05)
+
+            # Political Intelligence signals
+            if political_signals:
+                pol_direct = political_signals.get("direct_signals", [])
+                pol_predictions = political_signals.get("predictions", {})
+                pol_weight = method_weights.get("political", 0.10)
+
+                for sig in pol_direct:
+                    affected = sig.get("affected_assets", [])
+                    if asset in affected:
+                        signal_type = sig.get("signal", "")
+                        conf = sig.get("confidence", 0.5)
+                        impact = sig.get("expected_impact", 0)
+                        if isinstance(impact, (int, float)) and impact != 0:
+                            score += impact * conf * pol_weight
+                        elif "ESCALAT" in str(signal_type).upper():
+                            score -= 2.0 * conf * pol_weight
+                        elif "DEESCALAT" in str(signal_type).upper():
+                            score += 2.0 * conf * pol_weight
+
+                # AI predictions per actor
+                for actor_id, pred_data in pol_predictions.items():
+                    for pred in pred_data.get("predictions", []):
+                        pred_assets = pred.get("affected_assets", []) + pred.get("known_transmission_assets", [])
+                        if asset in pred_assets:
+                            est_impact = pred.get("estimated_impact", {})
+                            if isinstance(est_impact, dict) and asset in est_impact:
+                                impact_pct = est_impact[asset]
+                                prob = pred.get("probability", 0.5)
+                                score += impact_pct * prob * 0.1 * pol_weight
 
             # Apply vol_adjustment and conf_multiplier
             score *= vol_adjustment.get(asset, 1.0)
