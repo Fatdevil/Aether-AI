@@ -24,6 +24,7 @@ class TieredScheduler:
             "full_analysis": 60,  # Tier 2: Haiku/4o-mini (medium)
             "supervisor": 120,    # Tier 3: Opus (premium)
             "evaluation": 15,     # Backfill prices + evaluate predictions
+            "scenarios": 10080,   # Tier 4: Weekly scenario refresh (7 days)
         }
 
         # Last refresh timestamps

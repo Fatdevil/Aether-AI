@@ -65,6 +65,10 @@ meta_strategy = MetaStrategySelector()
 adversarial = AdversarialAgent()
 political_engine = PoliticalIntelligenceEngine()
 health_check = SystemHealthCheck()
+
+# Omega portfolio (scenario-based A/B testing)
+from scenario_engine import scenario_engine
+from portfolio_tracker import tracker as portfolio_ab_tracker
 # ConvexityOptimizer initialized per-request (needs asset list)
 # DailyScheduler initialized after all modules
 daily_sched = DailyScheduler(predictor, actor_sim, None, confidence_cal, meta_strategy, adversarial, health_check)
@@ -663,6 +667,37 @@ async def _run_full_pipeline() -> dict:
             "correlation_penalties": len(corr_penalty),
         }
         logger.info(f"💼 L7 PORTFOLIO: {len(portfolio_rec.get('recommendations', []))} positions, {len(corr_penalty)} corr-penalized")
+
+        # ================================================================
+        # LAYER 7b: OMEGA PORTFOLIO (scenario-based, weekly refresh)
+        # ================================================================
+        omega_data = None
+        try:
+            omega_state = scenario_engine.get_current_portfolio()
+            if omega_state:
+                omega_data = omega_state
+                portfolio_ab_tracker.update_omega(omega_state["weights"])
+            # Update Alpha weights from L7 recommendations
+            alpha_weights = {}
+            for rec in portfolio_rec.get("recommendations", []):
+                aid = rec.get("asset_id", rec.get("asset", "")).lower()
+                weight = rec.get("weight", rec.get("allocation", 0))
+                if aid and isinstance(weight, (int, float)):
+                    alpha_weights[aid] = weight / 100.0 if weight > 1 else weight
+            if alpha_weights:
+                portfolio_ab_tracker.update_alpha(alpha_weights)
+            # Daily snapshot
+            portfolio_ab_tracker.snapshot_daily(prices)
+        except Exception as e:
+            logger.debug(f"Omega/tracker update: {e}")
+
+        layers_log["L7b_omega"] = {
+            "active": omega_data is not None,
+            "n_scenarios": omega_data.get("n_scenarios", 0) if omega_data else 0,
+            "expected_return": omega_data.get("expected_return", 0) if omega_data else 0,
+            "worst_case": omega_data.get("worst_case_return", 0) if omega_data else 0,
+        }
+        logger.info(f"🎯 L7b OMEGA: {'active' if omega_data else 'no scenarios yet'}")
 
         # ================================================================
         # LAYER 8: RISK (Trailing Stop)
@@ -2308,6 +2343,47 @@ async def get_political_intelligence():
             "market_bias": {"bias": "NEUTRAL", "confidence": 0},
             "active_actors": [],
             "recent_analyses": [],
+
+
+# ===== Alpha vs Omega: Dual Portfolio =====
+
+@app.get("/api/portfolio/dual")
+async def get_dual_portfolio():
+    """Head-to-head: Alpha (pipeline) vs Omega (scenario-based)."""
+    comparison = portfolio_ab_tracker.get_comparison(days=90)
+    omega_dash = scenario_engine.get_dashboard()
+    return {
+        "comparison": comparison,
+        "omega_details": omega_dash,
+        "chart": portfolio_ab_tracker.get_history_chart(days=90),
+    }
+
+
+@app.get("/api/portfolio/scenarios")
+async def get_scenarios():
+    """Return active scenarios with probabilities and expected returns."""
+    return {
+        "scenarios": scenario_engine.get_scenarios(),
+        "omega_portfolio": scenario_engine.get_current_portfolio(),
+        "last_generation": scenario_engine.last_generation,
+    }
+
+
+@app.post("/api/portfolio/scenarios/refresh")
+async def refresh_scenarios():
+    """Force-refresh scenarios and regenerate Omega portfolio."""
+    regime = data_service.regime.get("current", "NEUTRAL") if hasattr(data_service, 'regime') else "NEUTRAL"
+    pol_state = political_engine.get_current_state()
+    result = await scenario_engine.refresh_scenarios(
+        regime=regime,
+        political_risk=pol_state.get("political_risk", "NORMAL"),
+        force=True,
+    )
+    return {
+        "status": "refreshed",
+        "n_scenarios": len(scenario_engine.scenarios),
+        "omega_portfolio": scenario_engine.get_current_portfolio(),
+    }
             "error": str(e),
         }
 
