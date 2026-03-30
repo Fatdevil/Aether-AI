@@ -12,8 +12,11 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()  # Load .env before anything else
 
+import os
 from fastapi import FastAPI, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from starlette.responses import FileResponse
 
 from data_service import DataService
 from ai_engine import get_system_info
@@ -2937,7 +2940,11 @@ async def run_actor_simulation(event: str = "Global trade war escalation", conte
 @app.get("/api/predictive/actor-intelligence")
 async def get_actor_intelligence():
     """Aggregerad intelligens från alla simuleringar"""
-    return actor_sim.get_aggregated_actor_intelligence()
+    try:
+        return actor_sim.get_aggregated_actor_intelligence()
+    except Exception as e:
+        logger.error(f"Actor intelligence error: {e}")
+        return {"error": str(e), "actors": [], "simulations": [], "market_bias": {"bias": "NEUTRAL", "confidence": 0}}
 
 
 @app.post("/api/predictive/convexity-optimize")
@@ -3187,3 +3194,27 @@ ANVÄNDARENS FRÅGA: {user_message}"""
         logger.error(f"Chat error: {e}")
         return {"response": f"Ett fel uppstod: {str(e)}", "provider": "error"}
 
+
+# ============================================================
+# FRONTEND STATIC FILES (production)
+# Serves the Vite build from ../dist/ when deployed
+# ============================================================
+_dist_path = os.path.join(os.path.dirname(__file__), "..", "dist")
+if os.path.isdir(_dist_path):
+    # Serve static assets (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=os.path.join(_dist_path, "assets")), name="static-assets")
+
+    # SPA catch-all: serve index.html for all non-API routes
+    @app.get("/{path:path}")
+    async def serve_spa(path: str):
+        """Serve frontend for all non-API routes (SPA fallback)."""
+        # If the exact file exists in dist, serve it
+        file_path = os.path.join(_dist_path, path)
+        if path and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        # Otherwise serve index.html (React Router handles routing)
+        return FileResponse(os.path.join(_dist_path, "index.html"))
+
+    logger.info(f"📦 Serving frontend from {_dist_path}")
+else:
+    logger.info("🔧 No dist/ folder found — frontend served separately (dev mode)")

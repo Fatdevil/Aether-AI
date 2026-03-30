@@ -3,7 +3,7 @@
  * Fetches real market data, news, and AI analysis from FastAPI backend.
  */
 
-export const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+export const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
 
 export interface APIAsset {
   id: string;
@@ -340,6 +340,12 @@ class AetherAPI {
   async refreshScenarios(): Promise<any> {
     const response = await fetch(`${this.baseUrl}/api/portfolio/scenarios/refresh`, { method: 'POST' });
     return response.json();
+  }
+
+  // ---- Core-Satellite Portfolio ----
+
+  async getCoreSatellite(portfolioValue: number = 700000, broker: string = 'avanza'): Promise<any> {
+    return this.fetch(`/api/core-satellite?portfolio_value=${portfolioValue}&broker=${broker}`);
   }
 
   // ---- Price History (TradingView charts) ----

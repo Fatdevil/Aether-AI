@@ -22,7 +22,7 @@ logger = logging.getLogger("aether.llm")
 # Tier 2: Medium (macro, micro, sectors, regions)
 # Tier 3: Premium (supervisor, portfolio)
 TIER_MODELS = {
-    0: {"provider": "gemini", "model": "gemini-2.0-flash-lite"},   # ~50% cheaper than Flash
+    0: {"provider": "gemini", "model": "gemini-2.0-flash"},       # Tier 0: cheap sentinel scanning
     1: {"provider": "gemini", "model": "gemini-2.5-flash"},
     2: {"provider": "gemini", "model": "gemini-2.5-flash"},       # Upgrade to anthropic/haiku when key available
     3: {"provider": "gemini", "model": "gemini-2.5-flash"},       # Upgrade to anthropic/opus when key available

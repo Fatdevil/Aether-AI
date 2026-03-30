@@ -31,11 +31,14 @@ def fetch_all_prices() -> dict:
     logger.info(f"Fetching prices for {len(tickers_list)} tickers...")
 
     try:
-        # Batch download for efficiency
-        data = yf.download(tickers_list, period="5d", group_by="ticker", progress=False)
+        # Batch download for efficiency using threads=False to prevent ASGI deadlocks
+        logger.info("  -> Calling yf.download (threads=False)...")
+        data = yf.download(tickers_list, period="5d", group_by="ticker", progress=False, threads=False)
+        logger.info("  -> yf.download completed!")
 
         for asset_id, info in ASSET_TICKERS.items():
             ticker = info["ticker"]
+            logger.info(f"  -> Processing {ticker} from batch...")
             try:
                 if len(tickers_list) == 1:
                     ticker_data = data
