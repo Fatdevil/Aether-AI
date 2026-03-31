@@ -21,6 +21,18 @@ export interface ScenarioPoint {
   bear: number;
 }
 
+export interface ScenarioNarratives {
+  bull: string;
+  base: string;
+  bear: string;
+}
+
+export interface ScenarioDrivers {
+  bull: string[];
+  base: string[];
+  bear: string[];
+}
+
 export interface Asset {
   id: string;
   name: string;
@@ -43,7 +55,13 @@ export interface Asset {
     base: number;
     bear: number;
   };
+  // Level 1+ scenario enrichment
+  scenarioNarratives?: ScenarioNarratives;
+  scenarioDrivers?: ScenarioDrivers;
+  scenarioWorstCasePct?: number;
+  scenarioLevel?: string;
 }
+
 
 export interface NewsItem {
   id: string;

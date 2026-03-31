@@ -21,6 +21,7 @@ from news_sentinel import sentinel
 from scheduler import scheduler
 from analysis_store import store
 from evaluator import evaluator
+from asset_scenario_generator import level1_generator
 
 logger = logging.getLogger("aether.data")
 
@@ -136,6 +137,18 @@ class DataService:
         scheduler.mark_refreshed("news_sentiment")
 
         # 3. Run AI analysis on each asset - Tier 2 (medium cost)
+        # Read VIX once for scenario generation
+        vix_now = self.prices.get("sp500", {}).get("indicators", {}).get("vix", 20.0) or 20.0
+        try:
+            from regime_detector import regime_detector as _rd
+            _regime_now = _rd.detect_regime().get("regime", "neutral")
+        except Exception:
+            _regime_now = "neutral"
+        # Top news headlines for scenario context
+        _news_headlines = [
+            n.get("title", "") for n in (self.news or []) if n.get("sentiment") in ("negative", "positive")
+        ][:8]
+
         if scheduler.should_refresh("full_analysis"):
             logger.info("🧠 Running AI analysis (Tier 2)...")
             assets_analysis = {}
@@ -158,6 +171,31 @@ class DataService:
                     "isFallback": price_data.get("is_fallback", False),
                     **analysis,
                 }
+
+                # ── Scenario generation (Level 1) ────────────────────────────
+                try:
+                    agent_scores_for_scenario = {
+                        k: v.get("score", 0)
+                        for k, v in analysis.get("agentDetails", {}).items()
+                        if isinstance(v, dict)
+                    }
+                    scenario_result = await level1_generator.generate(
+                        asset_id=asset_id,
+                        asset_name=info["name"],
+                        current_price=price_data.get("price", 0),
+                        final_score=analysis.get("finalScore", 0),
+                        agent_scores=agent_scores_for_scenario,
+                        regime=_regime_now,
+                        vix=vix_now,
+                        news_headlines=_news_headlines,
+                        supervisor_text=analysis.get("supervisorText", ""),
+                    )
+                    asset_obj.update(scenario_result.to_frontend(info["name"]))
+                    logger.info(f"  📊 Scenario generated for {info['name']} (Level {scenario_result.level})")
+                except Exception as _se:
+                    logger.warning(f"  ⚠️ Scenario gen skipped for {asset_id}: {_se}")
+                # ────────────────────────────────────────────────────────────
+
                 assets_analysis[asset_id] = {**analysis, "name": info["name"]}
                 self.assets.append(asset_obj)
 
