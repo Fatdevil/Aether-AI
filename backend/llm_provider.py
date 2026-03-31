@@ -23,9 +23,9 @@ logger = logging.getLogger("aether.llm")
 # Tier 3: Premium (supervisor, portfolio)
 TIER_MODELS = {
     0: {"provider": "gemini", "model": "gemini-2.0-flash"},       # Tier 0: cheap sentinel scanning
-    1: {"provider": "gemini", "model": "gemini-2.0-flash"},       # Tier 1: chat + scenarios
-    2: {"provider": "gemini", "model": "gemini-2.0-flash"},       # Upgrade to anthropic/haiku when key available
-    3: {"provider": "gemini", "model": "gemini-2.0-flash"},       # Upgrade to anthropic/opus when key available
+    1: {"provider": "gemini", "model": "gemini-2.5-flash"},       # Tier 1: chat + scenarios
+    2: {"provider": "gemini", "model": "gemini-2.5-flash"},       # Tier 2: macro/micro agents, sectors
+    3: {"provider": "gemini", "model": "gemini-2.5-flash"},       # Tier 3: supervisor, portfolio
 }
 
 # If Anthropic key is available, use tiered models
