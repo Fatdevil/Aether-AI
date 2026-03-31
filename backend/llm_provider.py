@@ -23,9 +23,9 @@ logger = logging.getLogger("aether.llm")
 # Tier 3: Premium (supervisor, portfolio)
 TIER_MODELS = {
     0: {"provider": "gemini", "model": "gemini-2.0-flash"},       # Tier 0: cheap sentinel scanning
-    1: {"provider": "gemini", "model": "gemini-2.5-flash"},
-    2: {"provider": "gemini", "model": "gemini-2.5-flash"},       # Upgrade to anthropic/haiku when key available
-    3: {"provider": "gemini", "model": "gemini-2.5-flash"},       # Upgrade to anthropic/opus when key available
+    1: {"provider": "gemini", "model": "gemini-2.0-flash"},       # Tier 1: chat + scenarios
+    2: {"provider": "gemini", "model": "gemini-2.0-flash"},       # Upgrade to anthropic/haiku when key available
+    3: {"provider": "gemini", "model": "gemini-2.0-flash"},       # Upgrade to anthropic/opus when key available
 }
 
 # If Anthropic key is available, use tiered models
@@ -228,7 +228,6 @@ async def _call_gemini(system: str, user: str, temp: float, max_tokens: int, mod
             config_kwargs = {
                 "temperature": temp,
                 "max_output_tokens": max_tokens,
-                "thinking_config": types.ThinkingConfig(thinking_budget=0),
             }
             if not plain_text:
                 config_kwargs["response_mime_type"] = "application/json"
