@@ -33,9 +33,9 @@ COPY --from=frontend-build /app/dist /app/dist
 # Set working directory to backend
 WORKDIR /app/backend
 
-# Railway sets PORT env var
+# Railway sets PORT env var dynamically
 ENV PORT=8000
 
-EXPOSE 8000
+EXPOSE ${PORT}
 
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD python -m uvicorn main:app --host 0.0.0.0 --port $PORT
