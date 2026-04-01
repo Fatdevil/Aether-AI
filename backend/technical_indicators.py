@@ -11,6 +11,7 @@ from typing import Optional
 
 import yfinance as yf
 import pandas as pd
+import pandas_ta as ta
 import numpy as np
 
 logger = logging.getLogger("aether.indicators")
@@ -50,16 +51,16 @@ def calculate_indicators(ticker: str, asset_id: str = "") -> dict:
         result = {}
 
         # === MOVING AVERAGES ===
-        sma_20 = close.rolling(20).mean()
-        sma_50 = close.rolling(50).mean()
-        sma_200 = close.rolling(200).mean()
+        sma_20 = close.ta.sma(length=20)
+        sma_50 = close.ta.sma(length=50)
+        sma_200 = close.ta.sma(length=200)
 
         current_price = float(close.iloc[-1])
         result["price"] = current_price
 
-        result["sma_20"] = round(float(sma_20.iloc[-1]), 2) if len(close) >= 20 else None
-        result["sma_50"] = round(float(sma_50.iloc[-1]), 2) if len(close) >= 50 else None
-        result["sma_200"] = round(float(sma_200.iloc[-1]), 2) if len(close) >= 200 else None
+        result["sma_20"] = round(float(sma_20.iloc[-1]), 2) if sma_20 is not None and len(sma_20.dropna()) > 0 else None
+        result["sma_50"] = round(float(sma_50.iloc[-1]), 2) if sma_50 is not None and len(sma_50.dropna()) > 0 else None
+        result["sma_200"] = round(float(sma_200.iloc[-1]), 2) if sma_200 is not None and len(sma_200.dropna()) > 0 else None
 
         # Price vs SMAs (% difference)
         if result["sma_20"]:
@@ -74,13 +75,9 @@ def calculate_indicators(ticker: str, asset_id: str = "") -> dict:
             result["golden_cross"] = result["sma_50"] > result["sma_200"]
             result["death_cross"] = result["sma_50"] < result["sma_200"]
 
-        # === RSI (14-period) ===
-        delta = close.diff()
-        gain = delta.where(delta > 0, 0.0).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0.0)).rolling(14).mean()
-        rs = gain / loss.replace(0, np.nan)
-        rsi = 100 - (100 / (1 + rs))
-        result["rsi_14"] = round(float(rsi.iloc[-1]), 1) if not pd.isna(rsi.iloc[-1]) else None
+        # === RSI (14-period Wilder's Smoothing) ===
+        rsi = close.ta.rsi(length=14)
+        result["rsi_14"] = round(float(rsi.iloc[-1]), 1) if rsi is not None and not pd.isna(rsi.iloc[-1]) else None
 
         rsi_label = "neutral"
         if result.get("rsi_14"):
@@ -95,67 +92,65 @@ def calculate_indicators(ticker: str, asset_id: str = "") -> dict:
         result["rsi_label"] = rsi_label
 
         # === MACD (12, 26, 9) ===
-        ema_12 = close.ewm(span=12, adjust=False).mean()
-        ema_26 = close.ewm(span=26, adjust=False).mean()
-        macd_line = ema_12 - ema_26
-        macd_signal = macd_line.ewm(span=9, adjust=False).mean()
-        macd_hist = macd_line - macd_signal
+        macd_df = close.ta.macd(fast=12, slow=26, signal=9)
+        if macd_df is not None and not macd_df.empty:
+            macd_line = macd_df.iloc[:, 0]     # MACD_12_26_9
+            macd_hist = macd_df.iloc[:, 1]     # MACDh_12_26_9
+            macd_signal = macd_df.iloc[:, 2]   # MACDs_12_26_9
 
-        result["macd"] = {
-            "line": round(float(macd_line.iloc[-1]), 2),
-            "signal": round(float(macd_signal.iloc[-1]), 2),
-            "histogram": round(float(macd_hist.iloc[-1]), 2),
-            "bullish": float(macd_hist.iloc[-1]) > 0,
-        }
-
-        # MACD crossover detection (last 3 days)
-        if len(macd_hist) >= 3:
-            prev_hist = float(macd_hist.iloc[-2])
-            curr_hist = float(macd_hist.iloc[-1])
-            if prev_hist <= 0 and curr_hist > 0:
-                result["macd"]["crossover"] = "bullish_cross"
-            elif prev_hist >= 0 and curr_hist < 0:
-                result["macd"]["crossover"] = "bearish_cross"
-            else:
-                result["macd"]["crossover"] = "none"
-
-        # === BOLLINGER BANDS (20, 2) ===
-        bb_mid = sma_20
-        bb_std = close.rolling(20).std()
-        bb_upper = bb_mid + (bb_std * 2)
-        bb_lower = bb_mid - (bb_std * 2)
-
-        if len(close) >= 20 and not pd.isna(bb_upper.iloc[-1]):
-            bb_u = float(bb_upper.iloc[-1])
-            bb_l = float(bb_lower.iloc[-1])
-            bb_width = ((bb_u - bb_l) / float(bb_mid.iloc[-1])) * 100
-
-            result["bollinger"] = {
-                "upper": round(bb_u, 2),
-                "lower": round(bb_l, 2),
-                "width_pct": round(bb_width, 1),
-                "position": "upper" if current_price > bb_u else "lower" if current_price < bb_l else "middle",
+            result["macd"] = {
+                "line": round(float(macd_line.iloc[-1]), 2),
+                "signal": round(float(macd_signal.iloc[-1]), 2),
+                "histogram": round(float(macd_hist.iloc[-1]), 2),
+                "bullish": float(macd_hist.iloc[-1]) > 0,
             }
 
-        # === ATR (14-period Average True Range) ===
-        tr = pd.DataFrame({
-            "hl": high - low,
-            "hc": abs(high - close.shift(1)),
-            "lc": abs(low - close.shift(1)),
-        }).max(axis=1)
-        atr = tr.rolling(14).mean()
+            # MACD crossover detection (last 3 days)
+            if len(macd_hist) >= 3:
+                prev_hist = float(macd_hist.iloc[-2])
+                curr_hist = float(macd_hist.iloc[-1])
+                if prev_hist <= 0 and curr_hist > 0:
+                    result["macd"]["crossover"] = "bullish_cross"
+                elif prev_hist >= 0 and curr_hist < 0:
+                    result["macd"]["crossover"] = "bearish_cross"
+                else:
+                    result["macd"]["crossover"] = "none"
 
-        if not pd.isna(atr.iloc[-1]):
+        # === BOLLINGER BANDS (20, 2) ===
+        bb_df = close.ta.bbands(length=20, std=2)
+        if bb_df is not None and not bb_df.empty:
+            bb_lower = bb_df.iloc[:, 0]  # BBL_20_2.0
+            bb_mid = bb_df.iloc[:, 1]    # BBM_20_2.0
+            bb_upper = bb_df.iloc[:, 2]  # BBU_20_2.0
+
+            if not pd.isna(bb_upper.iloc[-1]):
+                bb_u = float(bb_upper.iloc[-1])
+                bb_l = float(bb_lower.iloc[-1])
+                bb_m = float(bb_mid.iloc[-1])
+                bb_width = ((bb_u - bb_l) / bb_m) * 100
+
+                result["bollinger"] = {
+                    "upper": round(bb_u, 2),
+                    "lower": round(bb_l, 2),
+                    "width_pct": round(bb_width, 1),
+                    "position": "upper" if current_price > bb_u else "lower" if current_price < bb_l else "middle",
+                }
+
+        # === ATR (14-period True Range) ===
+        atr = daily.ta.atr(length=14)
+        if atr is not None and not pd.isna(atr.iloc[-1]):
             atr_val = float(atr.iloc[-1])
             result["atr_14"] = round(atr_val, 2)
             result["atr_pct"] = round((atr_val / current_price) * 100, 2)  # ATR as % of price
 
         # === VOLUME ANALYSIS ===
         if len(volume) >= 20:
-            vol_20_avg = float(volume.rolling(20).mean().iloc[-1])
-            vol_current = float(volume.iloc[-1])
-            if vol_20_avg > 0:
-                result["volume_vs_avg"] = round(((vol_current - vol_20_avg) / vol_20_avg) * 100, 1)
+            vol_sma = volume.ta.sma(length=20)
+            if vol_sma is not None and not pd.isna(vol_sma.iloc[-1]):
+                vol_20_avg = float(vol_sma.iloc[-1])
+                vol_current = float(volume.iloc[-1])
+                if vol_20_avg > 0:
+                    result["volume_vs_avg"] = round(((vol_current - vol_20_avg) / vol_20_avg) * 100, 1)
 
         # === RETURNS ===
         if len(close) >= 2:

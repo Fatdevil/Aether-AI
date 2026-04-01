@@ -66,7 +66,7 @@ class SupervisorAgent(BaseAgent):
             self.provider = "rule_based"
         else:
             self.provider = available[0]  # gemini or anthropic
-        self.use_tiered = True   # Use call_llm_tiered(tier=2) for evaluate()
+        self.use_tiered = True   # Use call_llm_tiered(tier=3) for evaluate()
         self.tango_filter = TangoConsensusFilter()
         self.meta_weights = {}
 
@@ -392,7 +392,7 @@ Skriv supervisor_text för VANLIGA MÄNNISKOR — enkel, tydlig svenska.
 Ge ditt slutvärde som JSON."""
 
         response, provider_used = await call_llm_tiered(
-            tier=2,  # Haiku — fast, capable, cheap (Opus only for daily brief)
+            tier=3,  # Opus — flagship model for ultimate reasoning
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,
             temperature=0.2,

@@ -441,41 +441,71 @@ async def _run_full_pipeline() -> dict:
             existing_chain_titles=existing_chains,
         )
 
-        # AI-driven event analysis
+        # AI-driven event analysis (Layer 2 & 3 Asynchronous Pipeline)
         ai_events = []
         if detection.get("needs_ai_analysis") and detection.get("ai_analysis_prompt"):
-            ai_resp = await call_llm(
-                "gemini",
+            import asyncio
+            
+            async def safe_llm_call(task_name, sys_prompt, usr_prompt, max_tokens=2000):
+                for attempt in range(2):
+                    try:
+                        resp = await call_llm(
+                            "anthropic", sys_prompt, usr_prompt, 
+                            temperature=0.3, max_tokens=max_tokens, model="claude-3-5-sonnet-20241022"
+                        )
+                        parsed = parse_llm_json(resp)
+                        if parsed:
+                            return {"task": task_name, "data": parsed}
+                    except Exception as e:
+                        logger.warning(f"⚠️ AI-uppdrag '{task_name}' misslyckades (Försök {attempt+1}/2): {e}")
+                        if attempt < 1:
+                            await asyncio.sleep(2) # Exponential backoff for rate limits
+                return {"task": task_name, "data": None}
+
+            # 1. Kör uppstarts-detektionen först (Main Driver)
+            parsed_detection = await safe_llm_call(
+                "detection",
                 "Du är en marknadshändelse-analytiker. Svara ENBART med JSON.",
-                detection["ai_analysis_prompt"],
-                temperature=0.3, max_tokens=2000
+                detection["ai_analysis_prompt"]
             )
-            parsed = parse_llm_json(ai_resp)
-            if parsed:
-                processed = predictor.process_ai_detection_response(parsed)
+            
+            if parsed_detection["data"]:
+                processed = predictor.process_ai_detection_response(parsed_detection["data"])
                 ai_events = processed.get("new_events", [])
 
+                # Bygg lista med parallella bygg-uppdrag för Causal Chains & Event Trees
+                tasks = []
                 for chain_req in processed.get("chains_to_build", [])[:3]:
-                    chain_resp = await call_llm(
-                        "gemini",
+                    tasks.append(safe_llm_call(
+                        f"chain_{chain_req['event_id']}",
                         "Du är en kausal analysexpert. Svara ENBART med JSON.",
                         chain_req["chain_prompt"],
-                        temperature=0.4, max_tokens=2000
-                    )
-                    chain_parsed = parse_llm_json(chain_resp)
-                    if chain_parsed:
-                        predictor.process_ai_chain_response(chain_req["event_id"], chain_parsed)
+                        max_tokens=2000
+                    ))
 
                 for tree_req in processed.get("trees_to_build", [])[:2]:
-                    tree_resp = await call_llm(
-                        "gemini",
+                    tasks.append(safe_llm_call(
+                        f"tree_{tree_req['event_id']}",
                         "Du är en scenarioanalytiker. Svara ENBART med JSON.",
                         tree_req["tree_prompt"],
-                        temperature=0.4, max_tokens=3000
-                    )
-                    tree_parsed = parse_llm_json(tree_resp)
-                    if tree_parsed:
-                        predictor.process_ai_tree_response(tree_req["event_id"], tree_parsed)
+                        max_tokens=3000
+                    ))
+
+                # 2. Exekvera alla Träd och Kedjor asynkront (Totalt parallellt!)
+                if tasks:
+                    logger.info(f"🚀 Kör {len(tasks)} parallella AI-uppdrag (Chains/Trees) med Claude 3.5...")
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    
+                    # 3. Processa resultaten oavsett i vilken ordning de slutfördes
+                    for res in results:
+                        if isinstance(res, dict) and res.get("data"):
+                            task_name = res["task"]
+                            if task_name.startswith("chain_"):
+                                ev_id = task_name.replace("chain_", "")
+                                predictor.process_ai_chain_response(ev_id, res["data"])
+                            elif task_name.startswith("tree_"):
+                                ev_id = task_name.replace("tree_", "")
+                                predictor.process_ai_tree_response(ev_id, res["data"])
 
         layers_log["L2_detection"] = {
             "events": detection.get("total_detected", 0),
@@ -636,44 +666,74 @@ async def _run_full_pipeline() -> dict:
         logger.info(f"🧠 L5 SYNTHESIS: {len(final_scores)} assets, conviction={conviction_ratio:.2f}")
 
         # ================================================================
+        # ================================================================
         # LAYER 6: ADVERSARIAL (challenge strong signals)
         # ================================================================
         strong_signals = {a: s for a, s in final_scores.items() if isinstance(s, (int, float)) and abs(s) > 3}
         blocked_assets = []
+        
+        async def run_adversarial_challenge(asset_id, score):
+            rec_data = {
+                "asset": asset_id,
+                "weighted_score": score,
+                "action": "KÖP" if score > 0 else "SÄLJ",
+                "conviction": conviction_ratio,
+            }
+            challenge_prompt = adversarial.build_challenge_prompt(rec_data)
+            
+            # Using Tier 2 (Haiku) for Devils Advocate via retry loop
+            import asyncio
+            for attempt in range(2):
+                try:
+                    response, _ = await call_llm_tiered(
+                        tier=2,
+                        system_prompt="Du är DEVILS ADVOCATE. Din enda uppgift är att hitta PROBLEM. Svara ENBART i JSON.",
+                        user_prompt=challenge_prompt,
+                        temperature=0.4,
+                        max_tokens=2000
+                    )
+                    parsed = parse_llm_json(response)
+                    if parsed:
+                        return {"asset": asset_id, "score": score, "parsed": parsed, "rec_data": rec_data}
+                except Exception as e:
+                    logger.warning(f"⚠️ Devils Advocate för {asset_id} felade (försök {attempt+1}/2): {e}")
+                    if attempt < 1:
+                        await asyncio.sleep(2)
+            return {"asset": asset_id, "score": score, "parsed": None, "rec_data": rec_data}
 
-        for asset_id_local, score in list(strong_signals.items())[:3]:
-            try:
-                rec_data = {
-                    "asset": asset_id_local,
-                    "weighted_score": score,
-                    "action": "KÖP" if score > 0 else "SÄLJ",
-                    "conviction": conviction_ratio,
-                }
-                challenge_prompt = adversarial.build_challenge_prompt(rec_data)
-                challenge_resp = await call_llm(
-                    "gemini", "DEVILS ADVOCATE. JSON.",
-                    challenge_prompt, temperature=0.4, max_tokens=2000
-                )
-                challenge_parsed = parse_llm_json(challenge_resp)
-                if challenge_parsed:
-                    challenge_result = adversarial.parse_challenge(challenge_parsed, rec_data)
-                    if not challenge_result.should_proceed:
-                        blocked_assets.append(asset_id_local)
-                        final_scores[asset_id_local] = 0
-                        logger.info(f"  🛡 BLOCKED: {asset_id_local} (score {score})")
-                    else:
-                        adj = challenge_result.adjusted_conviction
-                        orig = max(challenge_result.original_conviction, 0.01)
-                        final_scores[asset_id_local] = round(score * (adj / orig), 2)
-                        logger.info(f"  🛡 PROCEED: {asset_id_local} ({score:.1f} → {final_scores[asset_id_local]:.1f})")
-            except Exception as e:
-                logger.debug(f"Adversarial skipped for {asset_id_local}: {e}")
+        # Byt ut den seriella for-loopen mot parallella tasks
+        adv_tasks = [run_adversarial_challenge(ast, scr) for ast, scr in list(strong_signals.items())[:3]]
+        
+        if adv_tasks:
+            logger.info(f"🛡 ADVERSARIAL: Exekverar {len(adv_tasks)} parallella förhör med Tier 2 (Haiku)...")
+            adv_results = await asyncio.gather(*adv_tasks, return_exceptions=True)
+            
+            for res in adv_results:
+                if isinstance(res, dict) and res.get("parsed"):
+                    asset_id_local = res["asset"]
+                    score = res["score"]
+                    rec_data = res["rec_data"]
+                    challenge_parsed = res["parsed"]
+                    
+                    try:
+                        challenge_result = adversarial.parse_challenge(challenge_parsed, rec_data)
+                        if not challenge_result.should_proceed:
+                            blocked_assets.append(asset_id_local)
+                            final_scores[asset_id_local] = 0
+                            logger.info(f"  🛑 BLOCKED: {asset_id_local} (score {score}) underkänt i förhör!")
+                        else:
+                            adj = challenge_result.adjusted_conviction
+                            orig = max(challenge_result.original_conviction, 0.01)
+                            final_scores[asset_id_local] = round(score * (adj / orig), 2)
+                            logger.info(f"  ✅ PROCEED: {asset_id_local} (Djävulen godkänner: {score:.1f} → {final_scores[asset_id_local]:.1f})")
+                    except Exception as e:
+                        logger.error(f"Kunde inte tolka adversarial-svar för {asset_id_local}: {e}")
 
         layers_log["L6_adversarial"] = {
             "challenged": len(strong_signals),
             "blocked": blocked_assets,
         }
-        logger.info(f"🛡 L6 ADVERSARIAL: {len(strong_signals)} challenged, {len(blocked_assets)} blocked")
+        logger.info(f"🛡 L6 ADVERSARIAL KLAR: {len(strong_signals)} förhörda, {len(blocked_assets)} blockerade")
 
         # ================================================================
         # LAYER 7: PORTFOLIO (correlation-adjusted)
@@ -1379,19 +1439,12 @@ async def get_ensemble_status_api():
 
 @app.get("/api/trending")
 async def get_trending():
-    """Return trending entities from Marketaux."""
-    from news_service import fetch_trending_entities
-    trending = fetch_trending_entities()
-    return {"trending": trending, "source": "marketaux"}
+    return {"trending": [], "source": "rss"}
 
 
 @app.get("/api/sentiment-stats")
 async def get_sentiment_stats(symbols: str = "AAPL,TSLA,NVDA,MSFT,GOOGL", days: int = 7):
-    """Return sentiment time series for given symbols."""
-    from news_service import fetch_entity_sentiment_stats
-    symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
-    stats = fetch_entity_sentiment_stats(symbol_list, days)
-    return {"stats": stats, "days": days}
+    return {"stats": {}, "days": days}
 
 
 @app.get("/api/global-news")
@@ -1403,166 +1456,11 @@ async def get_global_news(
     search: str = "",
     limit: int = 30,
 ):
-    """Fetch filterable global news from Marketaux."""
-    from news_service import _fetch_mx_page, fetch_trending_entities
-    import os
-    import httpx
-
-    api_key = os.getenv("MARKETAUX_API_KEY", "")
-    if not api_key:
-        return {"news": data_service.get_news()[:limit], "trending": [], "count": 0}
-
-    params = {
-        "filter_entities": "true",
-        "must_have_entities": "true",
-        "limit": min(limit, 50),
-    }
-
-    if countries:
-        params["countries"] = countries
-    if industries:
-        params["industries"] = industries
-    if entity_types:
-        params["entity_types"] = entity_types
-    if language:
-        params["language"] = language
-    if search:
-        params["search"] = search
-
-    news_items = []
-    try:
-        with httpx.Client(timeout=20.0) as client:
-            _fetch_mx_page(client, api_key, params, news_items)
-    except Exception:
-        pass
-
-    # Also get trending for same filters
-    trending = []
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            t_params = {
-                "api_token": api_key,
-                "min_doc_count": 3,
-                "limit": 15,
-            }
-            if countries:
-                t_params["countries"] = countries
-            if language:
-                t_params["language"] = language
-            response = client.get(
-                "https://api.marketaux.com/v1/entity/trending/aggregation",
-                params=t_params,
-            )
-            if response.status_code == 200:
-                data = response.json()
-                for e in data.get("data", []):
-                    trending.append({
-                        "symbol": e.get("key", ""),
-                        "mentions": e.get("total_documents", 0),
-                        "sentiment_avg": round(e.get("sentiment_avg", 0) or 0, 3),
-                        "score": round(e.get("score", 0) or 0, 2),
-                    })
-    except Exception:
-        pass
-
-    return {"news": news_items, "trending": trending, "count": len(news_items)}
+    return {"news": data_service.get_news()[:limit], "trending": [], "count": 0}
 
 
 # ===== Risk Profile Portfolios =====
 
-@app.get("/api/risk-profiles")
-async def get_risk_profiles():
-    """Return 3 risk-profiled AI portfolios + regime advice."""
-    from ai_engine import generate_risk_portfolios
-
-    # Build assets_analysis from current data
-    assets_analysis = {}
-    for asset in data_service.assets:
-        assets_analysis[asset["id"]] = {
-            "finalScore": asset.get("finalScore", 0),
-            "name": asset.get("name", asset["id"]),
-        }
-
-    if not assets_analysis:
-        return {"profiles": {}, "regime": {"regime": "neutral", "recommended_profile": "balanced", "advice": "Ingen data tillgänglig."}}
-
-    # === Extract macro signals for scoring ===
-    overall_score = sum(a.get("finalScore", 0) for a in assets_analysis.values()) / max(len(assets_analysis), 1)
-    oil_score = assets_analysis.get("oil", {}).get("finalScore", 0)
-    rates_score = assets_analysis.get("us10y", {}).get("finalScore", 0)
-    equity_score = assets_analysis.get("sp500", {}).get("finalScore", 0)
-    gold_score = assets_analysis.get("gold", {}).get("finalScore", 0)
-    eurusd_score = assets_analysis.get("eurusd", {}).get("finalScore", 0)
-    btc_score = assets_analysis.get("btc", {}).get("finalScore", 0)
-
-    # === Fas 2+3: Sector & Region scoring via momentum ranking (#4) ===
-    try:
-        from signal_optimizer import compute_momentum_scores
-        momentum = compute_momentum_scores()
-    except Exception as e:
-        logger.warning(f"⚠️ Momentum ranking failed, using heuristic fallback: {e}")
-        momentum = {}
-
-    # Sector ETFs — use momentum if available, fallback to heuristic
-    sector_ids = ["sector-finance", "sector-energy", "sector-tech", "sector-health", "sector-defense"]
-    region_ids = ["region-em", "region-europe", "region-japan", "region-india"]
-
-    # Heuristic fallback scores (same as before)
-    heuristic_scores = {
-        "sector-finance": round(rates_score * 0.5 + equity_score * 0.3 + overall_score * 0.2, 1),
-        "sector-energy": round(oil_score * 0.6 + equity_score * 0.2 + overall_score * 0.2, 1),
-        "sector-tech": round(equity_score * 0.4 - rates_score * 0.3 + overall_score * 0.3, 1),
-        "sector-health": round(-overall_score * 0.3 + gold_score * 0.3 + 1.0, 1),
-        "sector-defense": round(gold_score * 0.4 - overall_score * 0.2 + 1.5, 1),
-        "region-em": round(max(-5, min(5, -eurusd_score * 0.3 + oil_score * 0.2 + equity_score * 0.3 + overall_score * 0.2)), 1),
-        "region-europe": round(max(-5, min(5, eurusd_score * 0.4 + equity_score * 0.3 + overall_score * 0.3)), 1),
-        "region-japan": round(max(-5, min(5, -rates_score * 0.3 + equity_score * 0.3 + overall_score * 0.2 + 0.5)), 1),
-        "region-india": round(max(-5, min(5, equity_score * 0.3 + btc_score * 0.2 + overall_score * 0.3 + 1.0)), 1),
-    }
-
-    from portfolio_optimizer import ASSET_NAMES
-
-    for asset_id in sector_ids + region_ids:
-        if asset_id in momentum and "score" in momentum[asset_id]:
-            # Use momentum-ranked score (data-driven)
-            mom_data = momentum[asset_id]
-            score = mom_data["score"]
-            # Blend: 70% momentum + 30% heuristic (smooths transitions)
-            heuristic = heuristic_scores.get(asset_id, 0)
-            blended = round(score * 0.7 + heuristic * 0.3, 1)
-            blended = max(-5, min(5, blended))
-        else:
-            # Pure heuristic fallback
-            blended = heuristic_scores.get(asset_id, 0)
-
-        assets_analysis[asset_id] = {
-            "finalScore": blended,
-            "name": ASSET_NAMES.get(asset_id, asset_id),
-        }
-
-    # === Leveraged ETFs (Turbo profile) ===
-    # Scored as amplified versions of their underlying (2x equity signal)
-    lev_sp500_score = max(-5, min(5, equity_score * 2.0))
-    lev_nasdaq_score = max(-5, min(5, equity_score * 1.5 + overall_score * 0.5))
-    assets_analysis["leveraged-sp500"] = {"finalScore": round(lev_sp500_score, 1), "name": "S&P 500 2x (SSO)"}
-    assets_analysis["leveraged-nasdaq"] = {"finalScore": round(lev_nasdaq_score, 1), "name": "Nasdaq 2x (QLD)"}
-
-    market_state = data_service.get_market_state()
-    result = generate_risk_portfolios(assets_analysis, market_state)
-    return result
-
-
-@app.get("/api/signal-weights")
-async def get_signal_weights_api():
-    """Return trained signal weights and momentum rankings."""
-    from signal_optimizer import get_signal_weights, compute_momentum_scores
-    try:
-        weights = get_signal_weights()
-        momentum = compute_momentum_scores()
-        return {"signal_weights": weights, "momentum_rankings": momentum}
-    except Exception as e:
-        logger.error(f"Signal weights failed: {e}")
-        return {"error": str(e), "signal_weights": {}, "momentum_rankings": {}}
 
 
 # ===== Core-Satellite Portfolio =====
@@ -1727,36 +1625,12 @@ async def get_feedback_stats():
 
 @app.get("/api/user-portfolio/news")
 async def get_portfolio_news(tickers: str = ""):
-    """Fetch news for specific portfolio tickers."""
-    from news_service import _fetch_mx_page
-    import os
-    import httpx
-
     ticker_list = [t.strip() for t in tickers.split(",") if t.strip()]
     if not ticker_list:
         return {"news": [], "count": 0}
-
-    api_key = os.getenv("MARKETAUX_API_KEY", "")
-    if not api_key:
-        # Fallback: filter from existing news
-        all_news = data_service.get_news()
-        filtered = [n for n in all_news if any(t.upper() in [tk.upper() for tk in n.get("tickers", [])] for t in ticker_list)]
-        return {"news": filtered[:20], "count": len(filtered)}
-
-    # Fetch from Marketaux for these specific tickers
-    news_items = []
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            _fetch_mx_page(client, api_key, {
-                "symbols": ",".join(ticker_list[:10]),
-                "filter_entities": "true",
-                "limit": 30,
-                "language": "en",
-            }, news_items)
-    except Exception:
-        pass
-
-    return {"news": news_items[:20], "count": len(news_items)}
+    all_news = data_service.get_news()
+    filtered = [n for n in all_news if any(t.upper() in [tk.upper() for tk in n.get("tickers", [])] for t in ticker_list)]
+    return {"news": filtered[:20], "count": len(filtered)}
 
 @app.post("/api/user-portfolio/parse-image")
 async def parse_portfolio_image_endpoint(file: UploadFile):

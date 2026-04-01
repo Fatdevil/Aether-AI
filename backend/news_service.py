@@ -3,7 +3,6 @@ News aggregator - fetches from multiple RSS feeds and analyzes sentiment.
 """
 
 import feedparser
-import httpx
 import logging
 import re
 from datetime import datetime, timezone
@@ -172,8 +171,6 @@ def fetch_all_news(max_per_feed: int = 5) -> list:
             logger.warning(f"  ❌ Failed to fetch {feed_config['source']}: {e}")
 
     # Source 2: Marketaux API (free tier: 100 req/day, ticker-linked!)
-    marketaux_news = _fetch_marketaux()
-    all_news.extend(marketaux_news)
 
     # Sort by timestamp descending
     all_news.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
@@ -188,8 +185,7 @@ def fetch_all_news(max_per_feed: int = 5) -> list:
             deduplicated.append(item)
 
     rss_count = sum(1 for n in deduplicated if n.get("data_source") == "rss")
-    mx_count = sum(1 for n in deduplicated if n.get("data_source") == "marketaux")
-    logger.info(f"  📰 Fetched {len(deduplicated)} unique news items ({rss_count} RSS + {mx_count} Marketaux)")
+    logger.info(f"  📰 Fetched {len(deduplicated)} unique news items (RSS)")
     return deduplicated[:50]  # Cap at 50 items
 
 
@@ -258,234 +254,6 @@ Regler:
         logger.warning(f"  News Scout failed: {e}")
 
     return {"top_5": [], "digest": ""}
-
-
-def _fetch_marketaux() -> list:
-    """Fetch financial news from Marketaux API.
-
-    SOFT-DISABLED: Only runs if MARKETAUX_ENABLED=true env var is set.
-    Default is disabled — replaced by free RSS + Google News feeds.
-    Set MARKETAUX_ENABLED=true in Railway if you want to re-enable.
-    """
-    import os
-    if os.getenv("MARKETAUX_ENABLED", "false").lower() != "true":
-        return []  # Disabled by default — save $49/mån
-    api_key = os.getenv("MARKETAUX_API_KEY", "")
-    if not api_key:
-        return []
-
-    news_items = []
-
-    # Tickers we actively monitor in Aether AI
-    TRACKED_SYMBOLS = ["AAPL", "MSFT", "TSLA", "NVDA", "GOOGL", "AMZN",
-                        "BTC", "ETH", "XAU", "XAG", "CL", "SPY"]
-
-    try:
-        logger.info("  Fetching Marketaux API (Standard plan)...")
-        with httpx.Client(timeout=20.0) as client:
-
-            # Request 1: Global financial news (English)
-            _fetch_mx_page(client, api_key, {
-                "language": "en",
-                "filter_entities": "true",
-                "must_have_entities": "true",
-                "limit": 50,
-            }, news_items)
-
-            # Request 2: Swedish financial news
-            _fetch_mx_page(client, api_key, {
-                "language": "sv",
-                "filter_entities": "true",
-                "limit": 20,
-            }, news_items)
-
-            # Request 3: News for tracked symbols
-            _fetch_mx_page(client, api_key, {
-                "symbols": ",".join(TRACKED_SYMBOLS),
-                "filter_entities": "true",
-                "limit": 50,
-            }, news_items)
-
-        logger.info(f"  📡 Marketaux: {len(news_items)} articles fetched")
-
-    except Exception as e:
-        logger.warning(f"  ❌ Marketaux error: {e}")
-
-    return news_items
-
-
-def _fetch_mx_page(client, api_key: str, params: dict, results: list):
-    """Fetch one page of Marketaux news and append parsed items."""
-    try:
-        params["api_token"] = api_key
-        response = client.get("https://api.marketaux.com/v1/news/all", params=params)
-        if response.status_code != 200:
-            logger.warning(f"  Marketaux returned {response.status_code}")
-            return
-
-        data = response.json()
-        articles = data.get("data", [])
-
-        for article in articles:
-            title = article.get("title", "").strip()
-            if not title:
-                continue
-
-            # Extract tickers and entity sentiment from entities
-            tickers = []
-            entity_sentiments = []
-            entities = article.get("entities", [])
-            for entity in entities:
-                symbol = entity.get("symbol", "")
-                if symbol:
-                    tickers.append(symbol)
-                # Entity-level sentiment (more precise than article-level)
-                e_sentiment = entity.get("sentiment_score")
-                if e_sentiment is not None:
-                    entity_sentiments.append({
-                        "symbol": symbol,
-                        "score": e_sentiment,
-                        "name": entity.get("name", ""),
-                        "match_score": entity.get("match_score", 0),
-                    })
-
-            # Determine article sentiment
-            sentiment = "neutral"
-            sentiment_score = 0.0
-
-            # Prefer entity-level sentiment (most precise)
-            if entity_sentiments:
-                avg_score = sum(e["score"] for e in entity_sentiments) / len(entity_sentiments)
-                sentiment_score = avg_score
-                if avg_score > 0.15:
-                    sentiment = "positive"
-                elif avg_score < -0.15:
-                    sentiment = "negative"
-            else:
-                # Fallback to keyword-based
-                sentiment = classify_sentiment(title)
-
-            pub = article.get("published_at", "")
-            pub_time = _parse_time(pub) if pub else None
-
-            description = article.get("description", "") or ""
-            if len(description) > 300:
-                description = description[:297] + "..."
-
-            lang = article.get("language", "en")
-
-            results.append({
-                "id": f"mx-{hash(title) % 100000}",
-                "title": title,
-                "source": article.get("source", "Marketaux"),
-                "time": _format_relative_time(pub_time) if pub_time else "Nyss",
-                "timestamp": pub_time.isoformat() if pub_time else datetime.now(timezone.utc).isoformat(),
-                "sentiment": sentiment,
-                "sentiment_score": round(sentiment_score, 3),
-                "category": classify_category(title + " " + description),
-                "summary": description or title,
-                "url": article.get("url", ""),
-                "tickers": tickers[:5],
-                "entity_sentiments": entity_sentiments[:5],
-                "data_source": "marketaux",
-                "language": lang,
-            })
-
-    except Exception as e:
-        logger.warning(f"  ❌ Marketaux page error: {e}")
-
-
-def fetch_trending_entities(api_key: str = None) -> list:
-    """Fetch trending entities from Marketaux (Standard plan)."""
-    import os
-    if not api_key:
-        api_key = os.getenv("MARKETAUX_API_KEY", "")
-    if not api_key:
-        return []
-
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            response = client.get(
-                "https://api.marketaux.com/v1/entity/trending/aggregation",
-                params={
-                    "api_token": api_key,
-                    "language": "en",
-                    "min_doc_count": 5,
-                    "published_after": (datetime.now(timezone.utc).replace(hour=0, minute=0)).strftime("%Y-%m-%dT%H:%M"),
-                    "limit": 20,
-                },
-            )
-            if response.status_code != 200:
-                return []
-
-            data = response.json()
-            entities = data.get("data", [])
-
-            trending = []
-            for e in entities:
-                trending.append({
-                    "symbol": e.get("key", ""),
-                    "mentions": e.get("total_documents", 0),
-                    "sentiment_avg": round(e.get("sentiment_avg", 0) or 0, 3),
-                    "score": round(e.get("score", 0) or 0, 2),
-                })
-
-            logger.info(f"  🔥 Trending: {len(trending)} entities")
-            return trending
-
-    except Exception as e:
-        logger.warning(f"  ❌ Trending fetch error: {e}")
-        return []
-
-
-def fetch_entity_sentiment_stats(symbols: list[str], days: int = 7, api_key: str = None) -> dict:
-    """Fetch sentiment time series for given symbols (Standard plan)."""
-    import os
-    if not api_key:
-        api_key = os.getenv("MARKETAUX_API_KEY", "")
-    if not api_key:
-        return {}
-
-    try:
-        published_after = (datetime.now(timezone.utc) - __import__('datetime').timedelta(days=days)).strftime("%Y-%m-%d")
-
-        with httpx.Client(timeout=15.0) as client:
-            response = client.get(
-                "https://api.marketaux.com/v1/entity/stats/intraday",
-                params={
-                    "api_token": api_key,
-                    "symbols": ",".join(symbols[:20]),
-                    "interval": "day",
-                    "published_after": published_after,
-                    "language": "en",
-                },
-            )
-            if response.status_code != 200:
-                return {}
-
-            data = response.json()
-            time_series = data.get("data", [])
-
-            # Restructure: { symbol: [{date, sentiment_avg, total_documents}, ...] }
-            result = {}
-            for day_data in time_series:
-                date = day_data.get("date", "")
-                for entity in day_data.get("data", []):
-                    symbol = entity.get("key", "")
-                    if symbol not in result:
-                        result[symbol] = []
-                    result[symbol].append({
-                        "date": date[:10],
-                        "sentiment_avg": round(entity.get("sentiment_avg", 0) or 0, 3),
-                        "mentions": entity.get("total_documents", 0),
-                    })
-
-            logger.info(f"  📊 Sentiment stats: {len(result)} symbols, {days}d")
-            return result
-
-    except Exception as e:
-        logger.warning(f"  ❌ Sentiment stats error: {e}")
-        return {}
 
 
 def _parse_time(time_str: str) -> Optional[datetime]:

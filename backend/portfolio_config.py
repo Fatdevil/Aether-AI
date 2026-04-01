@@ -490,3 +490,38 @@ TIER_SATELLITE_RULES = {
                        "eurusd", "us10y"],
     },
 }
+
+
+# ============================================================
+# Constant Maps shifted from MPT layer (portfolio_optimizer)
+# ============================================================
+
+ASSET_TICKER_MAP = {
+    'btc': 'BTC-USD', 'gold': 'GC=F', 'silver': 'SI=F', 'oil': 'BZ=F',
+    'sp500': '^GSPC', 'global-equity': 'ACWI', 'eurusd': 'EURUSD=X', 'us10y': '^TNX',
+    'sector-finance': 'XLF', 'sector-energy': 'XLE', 'sector-tech': 'XLK',
+    'sector-health': 'XLV', 'sector-defense': 'ITA', 'region-em': 'EEM',
+    'region-europe': 'VGK', 'region-japan': 'EWJ', 'region-india': 'INDA',
+    'leveraged-sp500': 'SSO', 'leveraged-nasdaq': 'QLD'
+}
+
+ASSET_NAMES = {
+    'btc': 'Bitcoin', 'gold': 'Guld (XAU)', 'silver': 'Silver (XAG)', 'oil': 'Råolja (Brent)',
+    'sp500': 'S&P 500', 'global-equity': 'Globala Aktier (ACWI)', 'eurusd': 'EUR/USD', 'us10y': 'US 10Y Räntor',
+    'sector-finance': 'Finans (XLF)', 'sector-energy': 'Energi (XLE)', 'sector-tech': 'Tech (XLK)',
+    'sector-health': 'Hälsa (XLV)', 'sector-defense': 'Försvar (ITA)', 'region-em': 'Tillväxtmarknader (EEM)',
+    'region-europe': 'Europa (VGK)', 'region-japan': 'Japan (EWJ)', 'region-india': 'Indien (INDA)',
+    'leveraged-sp500': 'S&P 500 2x (SSO)', 'leveraged-nasdaq': 'Nasdaq 2x (QLD)'
+}
+
+ASSET_COLORS = {
+    'btc': '#f7931a', 'global-equity': '#4facfe', 'sp500': '#6c5ce7',
+    'gold': '#ffd700', 'silver': '#c0c0c0', 'eurusd': '#00f2fe',
+    'oil': '#636e72', 'us10y': '#9d4edd',
+    'sector-finance': '#2ecc71', 'sector-energy': '#e67e22',
+    'sector-tech': '#3498db', 'sector-health': '#e74c3c',
+    'sector-defense': '#95a5a6',
+    'region-em': '#e84393', 'region-europe': '#0984e3',
+    'region-japan': '#fd79a8', 'region-india': '#00cec9',
+    'leveraged-sp500': '#ff6b6b', 'leveraged-nasdaq': '#ffa502'
+}

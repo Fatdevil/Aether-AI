@@ -64,7 +64,7 @@ Baserat på den dagliga prisaktionen, bedöm teknisk styrka/svaghet.
 Ge ditt JSON-svar."""
 
         response, provider_used = await call_llm_tiered(
-            tier=1,
+            tier=3,
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,
             temperature=0.2,
