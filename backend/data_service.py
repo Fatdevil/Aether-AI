@@ -180,7 +180,11 @@ class DataService:
 
             for asset_id, info in ASSET_TICKERS.items():
                 price_data = self.prices.get(asset_id, {})
-                analysis = await analyze_asset(asset_id, price_data, self.news, info["category"])
+                analysis = await analyze_asset(
+                    asset_id, price_data, self.news, info["category"],
+                    news_scout_digest=getattr(self, "news_scout_digest", ""),
+                )
+
                 providers = analysis.get("providersUsed", ["rule_based"])
                 logger.info(f"  🤖 {info['name']}: {analysis['finalScore']:+.1f} (via {', '.join(providers)})")
 

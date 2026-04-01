@@ -75,12 +75,14 @@ def _quick_signal_score(price_data: dict) -> float:
     return min(10.0, score)
 
 
-async def analyze_asset(asset_id: str, price_data: dict, news_items: list, category: str) -> dict:
+async def analyze_asset(asset_id: str, price_data: dict, news_items: list, category: str,
+                        news_scout_digest: str = "") -> dict:
     """
     Run multi-agent analysis on an asset.
     Each agent runs in parallel, then supervisor evaluates all results.
     Adaptive prompts inject historical performance feedback.
     Intelligence modules inject calendar, correlation, and regime context.
+    news_scout_digest: top-5 market stories summary from the Scout step.
     """
     asset_name_map = {
         "btc": "Bitcoin", "global-equity": "Globala Aktier (ACWI)", "sp500": "S&P 500",
@@ -225,6 +227,11 @@ async def analyze_asset(asset_id: str, price_data: dict, news_items: list, categ
         # Domain knowledge from user
         if domain_ctx:
             parts.append(domain_ctx)
+        # ★ News Scout digest — today's most important market stories
+        if news_scout_digest:
+            parts.append(
+                f"DAGENS VIKTIGASTE NYHETER (Scout-analys):\n{news_scout_digest}"
+            )
         return "\n".join(p for p in parts if p)
 
     # Run agents (sentiment first since it's rule-based/instant)

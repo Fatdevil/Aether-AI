@@ -32,15 +32,15 @@ TIER_MODELS = {
 def _init_tier_models():
     """Auto-configure tier models based on available API keys."""
     if os.getenv("ANTHROPIC_API_KEY"):
-        TIER_MODELS[2] = {"provider": "anthropic", "model": "claude-3-5-haiku-20241022"}
-        TIER_MODELS[3] = {"provider": "anthropic", "model": "claude-opus-4-20250514"}
-        logger.info("🧠 Tier models: Flash-Lite → Flash → Haiku → Opus")
+        TIER_MODELS[2] = {"provider": "anthropic", "model": "claude-haiku-4-5-20251014"}
+        TIER_MODELS[3] = {"provider": "anthropic", "model": "claude-opus-4-6-20260205"}  # Opus 4.6 Feb 2026
+        logger.info("🧠 Tier 3: Claude Opus 4.6 (supervisor + expanded report)")
     elif os.getenv("OPENAI_API_KEY"):
         TIER_MODELS[2] = {"provider": "openai", "model": "gpt-4o-mini"}
         TIER_MODELS[3] = {"provider": "openai", "model": "gpt-4o"}
         logger.info("🧠 Tier models: Gemini Flash → 4o-mini → GPT-4o")
     else:
-        logger.info("🧠 Tier models: All Gemini Flash (add ANTHROPIC_API_KEY for Opus)")
+        logger.info("🧠 Tier models: All Gemini Flash (add ANTHROPIC_API_KEY for Opus 4.6)")
 
 # Cache clients
 _openai_client = None
