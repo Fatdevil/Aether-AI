@@ -58,6 +58,8 @@ class DataService:
         self._returns_cache: Optional[pd.DataFrame] = None
         self._returns_cache_time: Optional[datetime] = None
         self._returns_cache_ttl = 21600  # 6 hours
+        # Scenario cache: {asset_id: {"result": ScenarioResult, "score": float, "ts": datetime}}
+        self._scenario_cache: dict = {}
 
     def get_historical_returns(self, period: str = "1y") -> pd.DataFrame:
         """
@@ -172,26 +174,48 @@ class DataService:
                     **analysis,
                 }
 
-                # ── Scenario generation (Level 1) ────────────────────────────
+                # ── Scenario generation (Level 1, cost-optimised) ───────────────
                 try:
-                    agent_scores_for_scenario = {
-                        k: v.get("score", 0)
-                        for k, v in analysis.get("agentDetails", {}).items()
-                        if isinstance(v, dict)
-                    }
-                    scenario_result = await level1_generator.generate(
-                        asset_id=asset_id,
-                        asset_name=info["name"],
-                        current_price=price_data.get("price", 0),
-                        final_score=analysis.get("finalScore", 0),
-                        agent_scores=agent_scores_for_scenario,
-                        regime=_regime_now,
-                        vix=vix_now,
-                        news_headlines=_news_headlines,
-                        supervisor_text=analysis.get("supervisorText", ""),
+                    _final_score = analysis.get("finalScore", 0)
+                    _cached = self._scenario_cache.get(asset_id)
+                    _score_changed = _cached and abs(_cached["score"] - _final_score) >= 2.0
+                    _cache_expired = not _cached or (
+                        (datetime.now() - _cached["ts"]).total_seconds() >= 86400  # 24h
                     )
-                    asset_obj.update(scenario_result.to_frontend(info["name"]))
-                    logger.info(f"  📊 Scenario generated for {info['name']} (Level {scenario_result.level})")
+                    _strong_signal = abs(_final_score) >= 3.0  # Only LLM for clear signals
+
+                    if _cached and not _cache_expired and not _score_changed:
+                        # ✅ Serve from cache
+                        asset_obj.update(_cached["result"].to_frontend(info["name"]))
+                        logger.info(f"  📦 Scenario cached for {info['name']} (score unchanged)")
+                    else:
+                        # Generate fresh
+                        agent_scores_for_scenario = {
+                            k: v.get("score", 0)
+                            for k, v in analysis.get("agentDetails", {}).items()
+                            if isinstance(v, dict)
+                        }
+                        scenario_result = await level1_generator.generate(
+                            asset_id=asset_id,
+                            asset_name=info["name"],
+                            current_price=price_data.get("price", 0),
+                            final_score=_final_score,
+                            agent_scores=agent_scores_for_scenario,
+                            regime=_regime_now,
+                            vix=vix_now,
+                            news_headlines=_news_headlines,
+                            supervisor_text=analysis.get("supervisorText", "") if _strong_signal else "",
+                            llm_narratives=_strong_signal,   # Skip LLM for neutral assets
+                        )
+                        asset_obj.update(scenario_result.to_frontend(info["name"]))
+                        # Save to cache
+                        self._scenario_cache[asset_id] = {
+                            "result": scenario_result,
+                            "score": _final_score,
+                            "ts": datetime.now(),
+                        }
+                        tag = "📊 LLM" if _strong_signal else "📊 rule-based"
+                        logger.info(f"  {tag} Scenario for {info['name']} (score {_final_score:+.1f})")
                 except Exception as _se:
                     logger.warning(f"  ⚠️ Scenario gen skipped for {asset_id}: {_se}")
                 # ────────────────────────────────────────────────────────────

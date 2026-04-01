@@ -141,16 +141,32 @@ class Level1Generator(ScenarioGenerator):
         vix: float,
         news_headlines: List[str],
         supervisor_text: str = "",
+        llm_narratives: bool = True,   # False = skip LLM, use rule-based text (cheaper)
     ) -> ScenarioResult:
 
         try:
             probs    = self._calculate_probabilities(final_score, vix, regime)
             paths    = self._calculate_price_paths(asset_id, current_price, final_score)
             wc       = self._calculate_worst_case(asset_id, current_price)
-            narratives, drivers = await self._generate_narratives(
-                asset_id, asset_name, current_price, final_score,
-                agent_scores, regime, vix, probs, paths, news_headlines, supervisor_text
-            )
+            if llm_narratives:
+                narratives, drivers = await self._generate_narratives(
+                    asset_id, asset_name, current_price, final_score,
+                    agent_scores, regime, vix, probs, paths, news_headlines, supervisor_text
+                )
+            else:
+                # Rule-based text — no LLM call, zero cost
+                def fmt(p): return f"{p:,.2f}" if p > 100 else f"{p:.4f}"
+                bt = fmt(paths["bull"][-1]); bst = fmt(paths["base"][-1]); brt = fmt(paths["bear"][-1])
+                narratives = {
+                    "bull": f"I ett positivt scenario kan {asset_name} nå {bt} om 6 månader.",
+                    "base": f"Mest troligt rör sig {asset_name} mot {bst} med mixade signaler.",
+                    "bear": f"I ett negativt scenario kan {asset_name} falla till {brt}.",
+                }
+                drivers = {
+                    "bull": ["Positiv riskaptit", "Tekniska signaler"],
+                    "base": ["Sidorörelse", "Blandade signaler"],
+                    "bear": ["Risk-off", "Minskad riskaptit"],
+                }
             return ScenarioResult(
                 price_paths=paths,
                 probabilities=probs,
@@ -322,11 +338,11 @@ REGLER:
         try:
             from llm_provider import call_llm_tiered, parse_llm_json
             resp, provider = await call_llm_tiered(
-                tier=1,
+                tier=0,   # 2.0-flash sufficient — simple JSON narrative generation
                 system_prompt="Du är en marknadsanalytiker. Svara ENBART med JSON.",
                 user_prompt=prompt,
                 temperature=0.5,
-                max_tokens=800,
+                max_tokens=600,   # Reduced — narratives are short
             )
             parsed = parse_llm_json(resp)
             if parsed:
