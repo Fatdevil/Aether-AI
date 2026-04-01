@@ -281,7 +281,7 @@ async def _call_anthropic(system: str, user: str, temp: float, max_tokens: int, 
     client = _get_anthropic()
     if not client:
         return None
-    model_name = model or "claude-sonnet-4-20250514"
+    model_name = model or "claude-haiku-4-5-20251014"  # Safe default: Haiku (cheap). Opus only via call_llm_tiered(tier=3).
     try:
         response = client.messages.create(
             model=model_name,

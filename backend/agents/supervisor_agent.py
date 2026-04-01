@@ -6,7 +6,7 @@ Primary provider: OpenAI GPT-4o (or best available)
 import os
 import logging
 from .base_agent import BaseAgent
-from llm_provider import call_llm, parse_llm_json, get_available_providers
+from llm_provider import call_llm, call_llm_tiered, parse_llm_json, get_available_providers
 
 logger = logging.getLogger("aether.agents.supervisor")
 
@@ -59,14 +59,14 @@ class SupervisorAgent(BaseAgent):
     perspective = "Övergripande"
 
     def __init__(self):
-        pref = os.getenv("SUPERVISOR_AGENT_PROVIDER", "openai")
+        # Supervisor per-asset eval: Tier 2 (Haiku) — cheap but capable
+        # Global daily brief uses Tier 3 (Opus) separately in daily_brief.py
         available = get_available_providers()
-        if pref in available:
-            self.provider = pref
-        elif available:
-            self.provider = available[0]
-        else:
+        if not available:
             self.provider = "rule_based"
+        else:
+            self.provider = available[0]  # gemini or anthropic
+        self.use_tiered = True   # Use call_llm_tiered(tier=2) for evaluate()
         self.tango_filter = TangoConsensusFilter()
         self.meta_weights = {}
 
@@ -391,7 +391,13 @@ Utvärdera dessa bedömningar med hänsyn till regim, händelser och historik.
 Skriv supervisor_text för VANLIGA MÄNNISKOR — enkel, tydlig svenska.
 Ge ditt slutvärde som JSON."""
 
-        response = await call_llm(self.provider, SYSTEM_PROMPT, user_prompt, temperature=0.2)
+        response, provider_used = await call_llm_tiered(
+            tier=2,  # Haiku — fast, capable, cheap (Opus only for daily brief)
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            temperature=0.2,
+            max_tokens=600,
+        )
         result = parse_llm_json(response)
 
         if result and "final_score" in result:
@@ -403,7 +409,7 @@ Ge ditt slutvärde som JSON."""
                 "confidence": float(result.get("confidence", 0.7)),
                 "risk_flags": result.get("risk_flags", []),
                 "key_change": result.get("key_change", ""),
-                "provider_used": self.provider,
+                "provider_used": provider_used,
             }
 
         return self._rule_based_evaluate(asset_id, asset_name, price_data, agent_results)
