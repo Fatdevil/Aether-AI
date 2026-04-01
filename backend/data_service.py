@@ -399,12 +399,13 @@ class DataService:
         pos = sum(1 for n in self.news if n.get("sentiment") == "positive")
         neg = sum(1 for n in self.news if n.get("sentiment") == "negative")
 
-        prompt = f"""Du är Aether AI:s chefsstrateg. Skriv en UTFÖRLIG marknadsanalys på svenska.
+        prompt = f"""Du är en av Sveriges ledande makroekonomiska analytiker. Skriv en professionell marknadsrapport på svenska riktad till en kompetent privatinvesterare.
 
-AKTUELLT MARKNADSLÄGE: {mood} (genomsnittsscore: {avg_score:+.1f})
-KORT SAMMANFATTNING: {short_summary}
+DATA UNDERLAG:
+Marknadsläge: {mood} (genomsnittsscore: {avg_score:+.1f})
+Kort sammanfattning: {short_summary}
 
-TILLGÅNGSÖVERSIKT:
+TILLGÅNGAR:
 {chr(10).join(asset_lines)}
 
 SEKTORER (topp 5):
@@ -413,61 +414,59 @@ SEKTORER (topp 5):
 REGIONER (topp 5):
 {chr(10).join(region_lines) if region_lines else "  (ej analyserade)"}
 
-NYHETER: {pos} positiva, {neg} negativa av {len(self.news)} totalt
+NYHETSFLÖDE: {pos} positiva, {neg} negativa av {len(self.news)} totalt
 
 {'='*50}
-PREDIKTIV INTELLIGENS (fullständig kontext):
+PREDIKTIV INTELLIGENS:
 {predict_context if predict_context else "(ingen prediktiv data tillgänglig)"}
 {'='*50}
 
 INSTRUKTIONER:
-1. Skriv som en erfaren, personlig rådgivare till en vän. INTE som en robot.
-2. Texten ska vara ca 500-700 ord (ungefär 1 A4-sida).
-3. Använd ENKEL svenska. Undvik finansjargong om möjligt — förklara som för en smart person utan finansbakgrund.
-4. Strukturera texten med dessa SEKTIONER (använd ### som rubrik):
+1. Ton: Professionell och analytisk — som en rapport från en senior ekonom till en välutbildad privatinvesterare.
+   INTE vänlig konversationston. INTE "Hej" eller "kära vän" eller liknande.
+   Börja direkt med analysen, utan hälsningsfraser.
+2. Längd: 400-600 ord. Koncist och utan utfyllnad.
+3. Svenska: Klar och precis. Finanstermer är OK men förklara om nödvändigt.
+4. Obligatoriska sektioner (använd ### som rubrik):
 
-### Marknadsläget just nu
-Vad händer? Varför? Hur mår marknaderna? 2-3 meningar som fångar stämningen.
+### Situationsanalys
+Vad karaktäriserar marknaden just nu? Vad är det övergripande läget?
+Vara konkret — referera till faktiska scores, priser och rörelser.
 
-### Vad driver marknaden
-De viktigaste krafterna just nu — räntor, inflation, geopolitik, etc.
-Referera till specifika datapunkter och events.
+### Makroekonomiska drivkrafter
+De strukturella krafterna som styr marknaden — räntor, inflation, penningpolitik, geopolitik.
+Kopla till specifika datapunkter.
 
-### Tillgångar att bevaka
-Vilka tillgångar sticker ut positivt/negativt? Varför?
-Nämn kausala kedjor och scenarioträd om de finns.
+### Tillgångsöversikt & Signaler
+Vilka tillgångar visar de starkaste signalerna, positiva som negativa?
+Referera till kausala kedjor och scenarioanalyser om tillgängliga.
 
-### Risker och varningssignaler
-Vad kan gå fel? Devil's advocate-perspektiv.
-Nämn kommande calendar events och deras potentiella påverkan.
+### Riskbild
+Vad kan bryta nuvarande trend? Vilka faktorer innebär oväntad nedsida?
+Nämn kommande makroevents om relevanta.
 
-### Framåtblick
-Vart är vi på väg? Lead-lag-signaler? Narrativfaser?
-Vad bör man göra de närmaste 1-2 veckorna?
+### Positionering & Rekommendationer
+Klar bottom-line: vad bör en investerare göra baserat på nuläget?
+Vara specifik — tillgångsslag, riktning, och motivering.
 
-5. Om det finns KAUSALA KEDJOR — beskriv den viktigaste kedjan i klartext.
-6. Om det finns SCENARIOTRÄD — nämn de 2-3 mest sannolika scenarierna.
-7. Om det finns LEAD-LAG-signaler — förklara vad de förutspår.
-8. Om det finns en FÖREGÅENDE SUPERVISOR-SUMMERING — referera till den naturligt.
-9. Avsluta ALLTID med en tydlig "bottom line" — vad ska en investerare göra?
-10. SJÄLVUTVÄRDERING: Om du har tillgång till din förra analys, börja ALLTID med
-    en ärlig utvärdering: "Förra gången skrev jag X. Det stämde/stämde inte eftersom Y."
-    Detta bygger förtroende och visar att systemet lär sig.
+5. SJÄLVUTVÄRDERING (om föregående analys finns): Inled sektionen Situationsanalys med en mening om
+   huruvida föregående analys var korrekt. Ex: "Föregående bedömning om X visade sig stämma/avvika då Y."
+6. Om kausala kedjor finns — lyft den viktigaste i klartext under Makroekonomiska drivkrafter.
+7. Om lead-lag-signaler finns — inkludera dem under Positionering.
 
-VIKTIGT:
-- Skriv INTE "Sammanfattning:" eller "Slutsats:" — skriv som ett personligt brev.
-- Var SPECIFIK med siffror och tillgångar.
-- Undvik att bara lista saker — skapa ett NARRATIV med flöde.
-- Om din förra analys var FEL — VAR ÄRLIG. Det bygger mer förtroende än att vara rätt.
-- BARA texten, inga JSON eller metadata."""
+FORMAT:
+- Ingen inledande hälsning
+- Inga avslutningshälsningar
+- Enbart rapporten, inga metadata eller JSON
+- Varje sektion ska tillföra konkret värde — ingen utfyllnad"""
 
         try:
             from llm_provider import call_llm_tiered
             result_text, provider = await call_llm_tiered(
                 tier=2,
-                system_prompt="Du är Aether AI:s chefsstrateg. Skriv analystext på enkel, varm svenska.",
+                system_prompt="Du är en senior makroekonomisk analytiker. Skriv precisa, professionella marknadsrapporter på svenska.",
                 user_prompt=prompt,
-                temperature=0.7,
+                temperature=0.5,
                 max_tokens=2000,
                 plain_text=True,
             )
