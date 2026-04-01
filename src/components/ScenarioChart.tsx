@@ -34,7 +34,7 @@ const SCENARIO_CONFIG = {
 } as const;
 
 export default function ScenarioChart({ asset }: ScenarioChartProps) {
-  const { scenarioData, scenarioProbabilities, scenarioNarratives, scenarioDrivers, scenarioWorstCasePct, scenarioLevel } = asset;
+  const { scenarioData, scenarioProbabilities, scenarioNarratives, scenarioDrivers, scenarioWorstCasePct, scenarioLevel, scenarioKeyTrigger, scenarioWorstCaseCatalyst } = asset;
 
   const hasNarratives = !!scenarioNarratives;
 
@@ -149,6 +149,40 @@ export default function ScenarioChart({ asset }: ScenarioChartProps) {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Key Trigger + Worst-case Catalyst */}
+      {(scenarioKeyTrigger || scenarioWorstCaseCatalyst) && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '0.75rem' }}>
+          {scenarioKeyTrigger && (
+            <div style={{
+              display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
+              padding: '0.55rem 0.75rem',
+              background: 'rgba(0,230,118,0.05)',
+              border: '1px solid rgba(0,230,118,0.15)',
+              borderRadius: '8px', fontSize: '0.78rem',
+            }}>
+              <span style={{ color: '#00e676', fontWeight: 700, flexShrink: 0 }}>🔑</span>
+              <span style={{ color: 'var(--text-secondary)' }}>
+                <strong style={{ color: '#00e676' }}>Bull-trigger:</strong> {scenarioKeyTrigger}
+              </span>
+            </div>
+          )}
+          {scenarioWorstCaseCatalyst && (
+            <div style={{
+              display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
+              padding: '0.55rem 0.75rem',
+              background: 'rgba(255,23,68,0.05)',
+              border: '1px solid rgba(255,23,68,0.15)',
+              borderRadius: '8px', fontSize: '0.78rem',
+            }}>
+              <span style={{ color: '#ff1744', fontWeight: 700, flexShrink: 0 }}>⚡</span>
+              <span style={{ color: 'var(--text-secondary)' }}>
+                <strong style={{ color: '#ff1744' }}>Bear-katalysator:</strong> {scenarioWorstCaseCatalyst}
+              </span>
+            </div>
+          )}
         </div>
       )}
 

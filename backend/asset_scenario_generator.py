@@ -67,6 +67,10 @@ class ScenarioResult:
     # Which level generated this
     level: str                              # "1", "2", or "3"
 
+    # ★ Level 1.5: What must happen / what triggers worst case
+    key_trigger: Optional[str] = None       # What must happen for bull scenario
+    worst_case_catalyst: Optional[str] = None  # What triggers the worst case
+
     # When this was generated
     generated_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
@@ -92,6 +96,8 @@ class ScenarioResult:
             "scenarioWorstCasePct": self.worst_case_pct,
             "scenarioLevel": self.level,
             "scenarioGeneratedAt": self.generated_at,
+            "scenarioKeyTrigger": self.key_trigger,
+            "scenarioWorstCaseCatalyst": self.worst_case_catalyst,
         }
 
 
@@ -149,7 +155,7 @@ class Level1Generator(ScenarioGenerator):
             paths    = self._calculate_price_paths(asset_id, current_price, final_score)
             wc       = self._calculate_worst_case(asset_id, current_price)
             if llm_narratives:
-                narratives, drivers = await self._generate_narratives(
+                narratives, drivers, key_trigger, worst_catalyst = await self._generate_narratives(
                     asset_id, asset_name, current_price, final_score,
                     agent_scores, regime, vix, probs, paths, news_headlines, supervisor_text
                 )
@@ -167,6 +173,8 @@ class Level1Generator(ScenarioGenerator):
                     "base": ["Sidorörelse", "Blandade signaler"],
                     "bear": ["Risk-off", "Minskad riskaptit"],
                 }
+                key_trigger = None
+                worst_catalyst = None
             return ScenarioResult(
                 price_paths=paths,
                 probabilities=probs,
@@ -174,7 +182,10 @@ class Level1Generator(ScenarioGenerator):
                 drivers=drivers,
                 worst_case_pct=wc,
                 level=self.LEVEL,
+                key_trigger=key_trigger,
+                worst_case_catalyst=worst_catalyst,
             )
+
         except Exception as e:
             logger.warning(f"ScenarioGenerator failed for {asset_id}: {e}")
             return self._fallback(asset_id, current_price, final_score)
@@ -297,14 +308,10 @@ BERÄKNADE PRISNIVÅER (6 månader):
 - Bas-scenario ({probs['base']}% sannolikhet): {base_target}  
 - Bear-scenario ({probs['bear']}% sannolikhet): {bear_target}
 
-Skriv för VARJE scenario:
-1. En mening som förklarar VAD som händer (inte bara prissiffran)
-2. 2-3 korta driver-bullets: vad driver det åt detta håll
-
 Svara med ENBART JSON:
 {{
   "bull": {{
-    "narrative": "En mening om vad som händer och varför - skriv som till en vän",
+    "narrative": "En mening vad som händer och varför - enkel svenska",
     "drivers": ["Drivare 1", "Drivare 2", "Drivare 3"]
   }},
   "base": {{
@@ -314,15 +321,17 @@ Svara med ENBART JSON:
   "bear": {{
     "narrative": "...",
     "drivers": ["...", "...", "..."]
-  }}
+  }},
+  "key_trigger": "En mening: Vad som MÅSTE hända för att bull-scenariot ska utlösas",
+  "worst_case_catalyst": "En mening: Vad som konkret utlöser det värsta scenariot"
 }}
 
 REGLER:
 - Enkel svenska, inga finans-klichéer
 - Narrativen ska referera till FAKTISKA drivare (VIX, regim, nyheter)
-- Bear-scenariot ska inkludera worst-case-tanken
-- Max 2 meningar per narrativ
-- Var KONKRET — nämn specifika faktorer"""
+- key_trigger: konkret händelse/nivå (ex: 'Fed annonserar räntehöjning', 'BTC faller under 55k')
+- worst_case_catalyst: konkret utlösare (ex: 'OPEC ökar produktion 2M fat/dag', 'recession bekräftas')
+- Max 2 meningar per narrativ, var KONKRET"""
 
         narratives = {
             "bull": f"Om marknaden vänder uppåt kan {asset_name} nå {bull_target} om 6 månader.",
@@ -342,7 +351,7 @@ REGLER:
                 system_prompt="Du är en marknadsanalytiker. Svara ENBART med JSON.",
                 user_prompt=prompt,
                 temperature=0.5,
-                max_tokens=600,   # Reduced — narratives are short
+                max_tokens=800,   # Slightly higher to accommodate new fields
             )
             parsed = parse_llm_json(resp)
             if parsed:
@@ -352,11 +361,15 @@ REGLER:
                         narratives[scenario] = s["narrative"]
                     if s.get("drivers"):
                         drivers[scenario] = s["drivers"][:3]
+                # Extract new Level 1.5 fields
+                key_trigger = parsed.get("key_trigger")
+                worst_catalyst = parsed.get("worst_case_catalyst")
                 logger.info(f"  📖 Scenarios for {asset_name} generated via {provider}")
+                return narratives, drivers, key_trigger, worst_catalyst
         except Exception as e:
             logger.warning(f"  ⚠️ Scenario narrative failed for {asset_id}: {e}")
 
-        return narratives, drivers
+        return narratives, drivers, None, None
 
     # ── Fallback (no LLM / bad price) ──────────────────────────
     def _fallback(

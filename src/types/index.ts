@@ -60,6 +60,9 @@ export interface Asset {
   scenarioDrivers?: ScenarioDrivers;
   scenarioWorstCasePct?: number;
   scenarioLevel?: string;
+  // Level 1.5: trigger conditions
+  scenarioKeyTrigger?: string;
+  scenarioWorstCaseCatalyst?: string;
 }
 
 
