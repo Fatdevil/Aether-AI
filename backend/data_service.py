@@ -4,6 +4,7 @@ Caches results and provides APIs for the FastAPI endpoints.
 """
 
 import logging
+import os
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -24,6 +25,14 @@ from evaluator import evaluator
 from asset_scenario_generator import level1_generator
 
 logger = logging.getLogger("aether.data")
+
+# ── Scenario cost controls (override via Railway env vars to upgrade quality) ──
+# SCENARIO_LLM_SCORE_THRESHOLD: min |score| to use LLM for narrative (default 3.0)
+#   Lower = more LLM calls, higher quality.  Raise to 0 when ready to go full-LLM.
+# SCENARIO_CACHE_TTL_HOURS: how long to cache per asset before regenerating (default 24h)
+#   Lower = fresher narratives but more API calls.
+SCENARIO_LLM_SCORE_THRESHOLD = float(os.getenv("SCENARIO_LLM_SCORE_THRESHOLD", "3.0"))
+SCENARIO_CACHE_TTL_SECONDS   = float(os.getenv("SCENARIO_CACHE_TTL_HOURS", "24")) * 3600
 
 # Icon mapping for frontend
 ICON_MAP = {
@@ -180,9 +189,9 @@ class DataService:
                     _cached = self._scenario_cache.get(asset_id)
                     _score_changed = _cached and abs(_cached["score"] - _final_score) >= 2.0
                     _cache_expired = not _cached or (
-                        (datetime.now() - _cached["ts"]).total_seconds() >= 86400  # 24h
+                        (datetime.now() - _cached["ts"]).total_seconds() >= SCENARIO_CACHE_TTL_SECONDS
                     )
-                    _strong_signal = abs(_final_score) >= 3.0  # Only LLM for clear signals
+                    _strong_signal = abs(_final_score) >= SCENARIO_LLM_SCORE_THRESHOLD
 
                     if _cached and not _cache_expired and not _score_changed:
                         # ✅ Serve from cache
