@@ -12,14 +12,23 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger("aether.news")
 
-# Financial news RSS feeds
+# Financial news RSS feeds — all free, no API key
 RSS_FEEDS = [
+    # Global financial
     {"url": "https://feeds.bbci.co.uk/news/business/rss.xml", "source": "BBC Business"},
     {"url": "https://www.cnbc.com/id/100003114/device/rss/rss.html", "source": "CNBC"},
     {"url": "https://feeds.reuters.com/reuters/businessNews", "source": "Reuters"},
     {"url": "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", "source": "NY Times"},
     {"url": "https://www.ft.com/?format=rss", "source": "Financial Times"},
     {"url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664", "source": "CNBC Finance"},
+    # Markets & investing
+    {"url": "https://feeds.marketwatch.com/marketwatch/topstories/", "source": "MarketWatch"},
+    {"url": "https://finance.yahoo.com/news/rssindex", "source": "Yahoo Finance"},
+    {"url": "https://www.investing.com/rss/news.rss", "source": "Investing.com"},
+    # Asset-specific Google News
+    {"url": "https://news.google.com/rss/search?q=bitcoin+cryptocurrency+market&hl=en-US&gl=US&ceid=US:en", "source": "Google News Crypto"},
+    {"url": "https://news.google.com/rss/search?q=gold+oil+commodities+market&hl=en-US&gl=US&ceid=US:en", "source": "Google News Commodities"},
+    {"url": "https://news.google.com/rss/search?q=federal+reserve+interest+rates+economy&hl=en-US&gl=US&ceid=US:en", "source": "Google News Macro"},
 ]
 
 # Keywords for sentiment classification
@@ -184,9 +193,83 @@ def fetch_all_news(max_per_feed: int = 5) -> list:
     return deduplicated[:50]  # Cap at 50 items
 
 
+async def get_news_scout(news_items: list[dict]) -> dict:
+    """
+    Scout step: Gemini Flash reads all headlines and returns:
+      - top_5: list of most market-moving stories with impact text
+      - digest: short paragraph summarising today's market narrative
+
+    Cost: ~$0.002 per call. Run once per analysis cycle.
+    Returns empty result if LLM unavailable.
+    """
+    if not news_items:
+        return {"top_5": [], "digest": ""}
+
+    headlines = "\n".join(
+        f"[{i+1}] {n['title']} ({n.get('source','')}, {n.get('time','')})"
+        for i, n in enumerate(news_items[:40])
+    )
+
+    prompt = f"""Du är en finansanalytiker. Analysera dessa nyhetsrubriker och identifiera vilka som påverkar globala finansmarknader mest.
+
+RUBRIKER:
+{headlines}
+
+Returnera JSON:
+{{
+  "top_5": [
+    {{
+      "index": 1,
+      "headline": "...",
+      "impact_score": 9,
+      "affected_assets": ["btc", "sp500"],
+      "impact_sv": "En mening på enkel svenska: vad händer och vad det betyder för investerare."
+    }}
+  ],
+  "digest": "2-3 meningar: Nutidens viktigaste marknadsberättelse att känna till."
+}}
+
+Regler:
+- impact_score: 1-10 (10 = högst marknadspåverkan)
+- impact_sv: konkret, inga klichéer, förklara EFFEKTEN (inte bara händelsen)
+- Bara JSON, inget annat"""
+
+    try:
+        from llm_provider import call_llm_tiered, parse_llm_json
+        resp, provider = await call_llm_tiered(
+            tier=0,
+            system_prompt="Du är finansanalytiker. Svara ENBART med JSON.",
+            user_prompt=prompt,
+            temperature=0.2,
+            max_tokens=1200,
+        )
+        parsed = parse_llm_json(resp)
+        if parsed and parsed.get("top_5"):
+            # Stamp impact_sv back onto source news items
+            top_headlines = {item["headline"]: item["impact_sv"] for item in parsed["top_5"]}
+            for news in news_items:
+                title = news["title"]
+                if title in top_headlines:
+                    news["impact_sv"] = top_headlines[title]
+                    news["is_top_story"] = True
+            logger.info(f"  🔍 News Scout: {len(parsed['top_5'])} top stories identified via {provider}")
+            return parsed
+    except Exception as e:
+        logger.warning(f"  News Scout failed: {e}")
+
+    return {"top_5": [], "digest": ""}
+
+
 def _fetch_marketaux() -> list:
-    """Fetch financial news from Marketaux API (Standard: 10k req/day, 50/request)."""
+    """Fetch financial news from Marketaux API.
+
+    SOFT-DISABLED: Only runs if MARKETAUX_ENABLED=true env var is set.
+    Default is disabled — replaced by free RSS + Google News feeds.
+    Set MARKETAUX_ENABLED=true in Railway if you want to re-enable.
+    """
     import os
+    if os.getenv("MARKETAUX_ENABLED", "false").lower() != "true":
+        return []  # Disabled by default — save $49/mån
     api_key = os.getenv("MARKETAUX_API_KEY", "")
     if not api_key:
         return []

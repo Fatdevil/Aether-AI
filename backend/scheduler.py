@@ -17,14 +17,20 @@ class TieredScheduler:
     """Manages tiered refresh intervals for cost optimization."""
 
     def __init__(self):
-        # Intervals in minutes
+        # Intervals in minutes (fallback if no scheduled_times set)
         self.intervals = {
-            "prices": 5,          # Tier 0: No LLM, just yfinance
-            "news_sentiment": 5,  # Tier 1: Gemini Flash (cheapest)
-            "full_analysis": 60,  # Tier 2: Haiku/4o-mini (medium)
-            "supervisor": 120,    # Tier 3: Opus (premium)
-            "evaluation": 15,     # Backfill prices + evaluate predictions
-            "scenarios": 10080,   # Tier 4: Weekly scenario refresh (7 days)
+            "prices": 5,           # Tier 0: No LLM, just yfinance
+            "news_sentiment": 5,   # Tier 1: Gemini Flash (cheapest)
+            "full_analysis": 360,  # Tier 2: Safety-net 6h fallback
+            "supervisor": 360,     # Tier 3: Safety-net
+            "evaluation": 15,
+            "scenarios": 10080,    # Weekly
+        }
+
+        # Scheduled times (HH:MM, UTC) for time-based triggers
+        # full_analysis runs at 06:30 UTC = 08:30 CET, 12:30 UTC = 14:30 CET
+        self.scheduled_times = {
+            "full_analysis": ["06:30", "12:30"],   # 08:30 + 14:30 CET
         }
 
         # Last refresh timestamps
@@ -43,7 +49,7 @@ class TieredScheduler:
         }
 
     def should_refresh(self, tier: str) -> bool:
-        """Check if a tier needs refreshing based on its interval."""
+        """Check if a tier needs refreshing."""
         # Check force flag first
         if self._force_flags.get(tier, False):
             self._force_flags[tier] = False
@@ -51,14 +57,31 @@ class TieredScheduler:
             return True
 
         last = self._last_refresh.get(tier)
+
+        # Time-based scheduling (e.g. 08:30 + 14:30 CET)
+        times = self.scheduled_times.get(tier)
+        if times:
+            now = datetime.now(timezone.utc)
+            today_str = now.strftime("%Y-%m-%d")
+            for time_str in times:
+                scheduled = datetime.strptime(f"{today_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+                # Within a 10-minute window after scheduled time
+                window_end = scheduled + timedelta(minutes=10)
+                if scheduled <= now <= window_end:
+                    if last is None or last < scheduled:
+                        logger.info(f"⏰ Scheduled analysis at {time_str} UTC triggered")
+                        return True
+            # Not in any window — don't run
+            if last is not None:
+                return False
+            # Never run before — run once on startup
+            return True
+
+        # Fallback: interval-based
         if last is None:
-            return True  # Never refreshed
-
+            return True
         interval = self.intervals.get(tier, 60)
-        next_refresh = last + timedelta(minutes=interval)
-        now = datetime.now(timezone.utc)
-
-        return now >= next_refresh
+        return datetime.now(timezone.utc) >= last + timedelta(minutes=interval)
 
     def mark_refreshed(self, tier: str):
         """Mark a tier as just refreshed."""

@@ -132,8 +132,20 @@ class DataService:
         logger.info("📰 Fetching news...")
         self.news = fetch_all_news()
 
+        # 2a. News Scout — ranks top stories + stamps impact_sv (Gemini Flash, ~$0.002)
+        logger.info("🔍 Running news scout...")
+        try:
+            from news_service import get_news_scout
+            scout_result = await get_news_scout(self.news)
+            self.news_scout_digest = scout_result.get("digest", "")
+            if self.news_scout_digest:
+                logger.info(f"  📋 Scout digest ready ({len(self.news_scout_digest)} chars)")
+        except Exception as e:
+            logger.warning(f"Scout error: {e}")
+            self.news_scout_digest = ""
+
         # 2b. Run news sentinel (AI impact scoring) - Tier 1 (cheap)
-        logger.info("🔍 Running news sentinel...")
+        logger.info("🚨 Running news sentinel...")
         try:
             new_alerts = await sentinel.scan_news(self.news)
             if new_alerts:
@@ -146,6 +158,7 @@ class DataService:
         except Exception as e:
             logger.warning(f"Sentinel error: {e}")
         scheduler.mark_refreshed("news_sentiment")
+
 
         # 3. Run AI analysis on each asset - Tier 2 (medium cost)
         # Read VIX once for scenario generation
