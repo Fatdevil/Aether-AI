@@ -31,7 +31,7 @@ logger = logging.getLogger("aether.data")
 #   Lower = more LLM calls, higher quality.  Raise to 0 when ready to go full-LLM.
 # SCENARIO_CACHE_TTL_HOURS: how long to cache per asset before regenerating (default 24h)
 #   Lower = fresher narratives but more API calls.
-SCENARIO_LLM_SCORE_THRESHOLD = float(os.getenv("SCENARIO_LLM_SCORE_THRESHOLD", "3.0"))
+SCENARIO_LLM_SCORE_THRESHOLD = float(os.getenv("SCENARIO_LLM_SCORE_THRESHOLD", "0"))
 SCENARIO_CACHE_TTL_SECONDS   = float(os.getenv("SCENARIO_CACHE_TTL_HOURS", "24")) * 3600
 
 # Icon mapping for frontend

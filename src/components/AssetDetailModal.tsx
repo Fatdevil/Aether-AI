@@ -3,6 +3,8 @@ import { X, TrendingUp, TrendingDown, Brain, BarChart3, Newspaper, Cpu, Shield, 
 import type { Asset } from '../types';
 import { getRecommendation } from '../types';
 import PriceChart from './PriceChart';
+import ScenarioChart from './ScenarioChart';
+
 
 interface Props {
   asset: Asset;
@@ -289,33 +291,13 @@ export default function AssetDetailModal({ asset, price, onClose }: Props) {
             </div>
           </section>
 
-          {/* Scenario Probabilities */}
+          {/* Scenario Chart — full bull/base/bear with narratives */}
           {asset.scenarioProbabilities && (
             <section style={{ marginBottom: '1.5rem' }}>
-              <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', fontWeight: 700 }}>Scenarioanalys</h3>
-              <div style={{
-                display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem',
-              }}>
-                {[
-                  { key: 'bull', label: '🟢 Bull', color: '#10b981' },
-                  { key: 'base', label: '🟡 Bas', color: '#f59e0b' },
-                  { key: 'bear', label: '🔴 Bear', color: '#ef4444' },
-                ].map(({ key, label, color }) => {
-                  const prob = (asset.scenarioProbabilities as any)[key] ?? 0;
-                  const displayPct = prob > 1 ? prob : prob * 100; // Handle both 0-1 and 0-100 formats
-                  return (
-                    <div key={key} style={{
-                      padding: '0.75rem', borderRadius: '10px', textAlign: 'center',
-                      background: `${color}08`, border: `1px solid ${color}20`,
-                    }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '0.2rem' }}>{label}</div>
-                      <div style={{ fontSize: '1.3rem', fontWeight: 700, color }}>{displayPct.toFixed(0)}%</div>
-                    </div>
-                  );
-                })}
-              </div>
+              <ScenarioChart asset={asset} />
             </section>
           )}
+
 
           {/* Price Chart */}
           <section>
