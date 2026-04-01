@@ -6,7 +6,7 @@ Primary provider: Anthropic Claude
 import os
 import logging
 from .base_agent import BaseAgent
-from llm_provider import call_llm, parse_llm_json
+from llm_provider import call_llm_tiered, parse_llm_json
 
 logger = logging.getLogger("aether.agents.tech")
 
@@ -48,7 +48,7 @@ class TechnicalAgent(BaseAgent):
     perspective = "Teknisk"
 
     def __init__(self):
-        self.provider = os.getenv("TECH_AGENT_PROVIDER", "anthropic")
+        pass  # Uses call_llm_tiered — no fixed provider needed
 
     async def analyze(self, asset_id, asset_name, category, price_data, news_items, perf_context=""):
         price_ctx = self._format_price_context(price_data)
@@ -63,7 +63,13 @@ Baserat på den dagliga prisaktionen, bedöm teknisk styrka/svaghet.
 {perf_context}
 Ge ditt JSON-svar."""
 
-        response = await call_llm(self.provider, SYSTEM_PROMPT, user_prompt)
+        response, provider_used = await call_llm_tiered(
+            tier=1,
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            temperature=0.2,
+            max_tokens=400,
+        )
         result = parse_llm_json(response)
 
         if result and "score" in result:
@@ -72,7 +78,7 @@ Ge ditt JSON-svar."""
                 "confidence": float(result.get("confidence", 0.7)),
                 "reasoning": result.get("reasoning", ""),
                 "key_factors": result.get("key_factors", []),
-                "provider_used": self.provider,
+                "provider_used": provider_used,
             }
 
         return self._rule_based_fallback(asset_id, price_data)
