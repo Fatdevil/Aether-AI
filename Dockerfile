@@ -5,11 +5,14 @@ FROM node:22-slim AS frontend-build
 
 WORKDIR /app
 
-# Copy package files (without lock to avoid stale native bindings)
-COPY package.json ./
+# Copy package files (including lockfile if it exists)
+COPY package*.json ./
 
-# Install deps and build
-RUN npm install
+# Limit Node memory to avoid OOM (exit code 137) on Railway builders
+ENV NODE_OPTIONS="--max-old-space-size=400"
+
+# Install deps and build (-no-fund and -no-audit saves RAM/CPU)
+RUN npm install --no-fund --no-audit
 COPY . .
 RUN npx vite build
 
