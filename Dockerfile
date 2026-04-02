@@ -9,10 +9,10 @@ WORKDIR /app
 COPY package*.json ./
 
 # Limit Node memory to avoid OOM (exit code 137) on Railway builders
-ENV NODE_OPTIONS="--max-old-space-size=400"
+ENV NODE_OPTIONS="--max-old-space-size=350"
 
-# Install deps and build (-no-fund and -no-audit saves RAM/CPU)
-RUN npm install --no-fund --no-audit
+# Install deps and build using 'ci' which is much faster and uses less RAM than 'install'
+RUN npm ci --no-fund --no-audit
 COPY . .
 RUN npx vite build
 
