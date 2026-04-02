@@ -28,9 +28,9 @@ class TieredScheduler:
         }
 
         # Scheduled times (HH:MM, UTC) for time-based triggers
-        # full_analysis runs at 06:30 UTC = 08:30 CET, 12:30 UTC = 14:30 CET
+        # full_analysis runs at 05:30 UTC = 07:30 CET, 12:30 UTC = 14:30 CET
         self.scheduled_times = {
-            "full_analysis": ["06:30", "12:30"],   # 08:30 + 14:30 CET
+            "full_analysis": ["05:30", "12:30"],   # 07:30 + 14:30 CET
         }
 
         # Last refresh timestamps
@@ -62,6 +62,10 @@ class TieredScheduler:
         times = self.scheduled_times.get(tier)
         if times:
             now = datetime.now(timezone.utc)
+            # Endast på börsdagar (måndag=0 till fredag=4)
+            if now.weekday() > 4:
+                return False
+                
             today_str = now.strftime("%Y-%m-%d")
             for time_str in times:
                 scheduled = datetime.strptime(f"{today_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)

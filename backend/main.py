@@ -340,19 +340,21 @@ async def background_predictive_loop():
                 cet_now = datetime.now(timezone(timedelta(hours=2)))
                 hour = cet_now.hour
 
-                # Morning brief: generate between 08:00-10:00 CET
-                if 8 <= hour <= 10:
-                    date_key = cet_now.strftime("%Y-%m-%d")
-                    if f"{date_key}_morning" not in daily_brief_engine.briefs:
-                        brief = await daily_brief_engine.generate_brief("morning")
-                        logger.info(f"☀ Morning brief: {brief.get('content', {}).get('headline', '?')}")
+                # Endast på börsdagar (måndag=0 till fredag=4)
+                if cet_now.weekday() <= 4:
+                    # Morning brief: generate between 08:00-10:00 CET
+                    if 8 <= hour <= 10:
+                        date_key = cet_now.strftime("%Y-%m-%d")
+                        if f"{date_key}_morning" not in daily_brief_engine.briefs:
+                            brief = await daily_brief_engine.generate_brief("morning")
+                            logger.info(f"☀ Morning brief: {brief.get('content', {}).get('headline', '?')}")
 
-                # Evening brief: generate between 22:00-23:59 CET
-                if 22 <= hour <= 23:
-                    date_key = cet_now.strftime("%Y-%m-%d")
-                    if f"{date_key}_evening" not in daily_brief_engine.briefs:
-                        brief = await daily_brief_engine.generate_brief("evening")
-                        logger.info(f"🌙 Evening brief: {brief.get('content', {}).get('headline', '?')}")
+                    # Afternoon brief: generate between 14:00-15:00 CET (before US opens)
+                    if 14 <= hour <= 15:
+                        date_key = cet_now.strftime("%Y-%m-%d")
+                        if f"{date_key}_evening" not in daily_brief_engine.briefs:
+                            brief = await daily_brief_engine.generate_brief("evening")
+                            logger.info(f"☕ Afternoon brief: {brief.get('content', {}).get('headline', '?')}")
             except Exception as e:
                 logger.debug(f"Daily brief: {e}")
 

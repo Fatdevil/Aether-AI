@@ -32,22 +32,20 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
   const sellSignals = assets.filter(a => a.finalScore <= -3);
 
   return (
-    <main className="container" style={{ padding: '1.5rem 1.25rem 6rem' }}>
+    <main className="container dashboard-main">
       {/* ── Section 1: Hero — Marknadsregim + Sammanfattning ── */}
       <motion.section
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        className="glass-panel"
+        className="glass-panel dashboard-hero"
         style={{
-          padding: '1.75rem 2rem',
-          marginBottom: '1.5rem',
           borderLeft: `4px solid ${regime.color}`,
           background: `linear-gradient(135deg, ${regime.color}08 0%, transparent 60%)`,
         }}
       >
         {/* Regime + Score Row */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <div className="dashboard-hero-header">
+          <div className="dashboard-hero-title">
             <span style={{ fontSize: '2rem' }}>{regime.icon}</span>
             <div>
               <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700 }}>
@@ -60,7 +58,7 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
           </div>
 
           {/* Signal Counts */}
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div className="dashboard-hero-badges">
             <SignalBadge count={buySignals.length} type="buy" />
             <SignalBadge count={assets.length - buySignals.length - sellSignals.length} type="neutral" />
             <SignalBadge count={sellSignals.length} type="sell" />
@@ -68,7 +66,7 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
         </div>
 
         {/* AI Summary */}
-        <p style={{ fontSize: '0.95rem', lineHeight: 1.7, color: 'var(--text-secondary)', margin: 0 }}>
+        <p className="dashboard-hero-summary">
           {marketState.overallSummary}
         </p>
 
@@ -77,18 +75,7 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
           <div style={{ marginTop: '1rem' }}>
             <button
               onClick={() => setShowFullBrief(!showFullBrief)}
-              style={{
-                background: 'rgba(79, 172, 254, 0.08)',
-                border: '1px solid rgba(79, 172, 254, 0.2)',
-                padding: '0.5rem 1rem',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                transition: 'all 0.2s ease',
-                fontFamily: 'var(--font-body)',
-              }}
+              className="btn-full-brief"
             >
               <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-cyan)' }}>
                 {showFullBrief ? 'Dölj analys' : '📖 Läs full AI-analys'}
@@ -100,13 +87,7 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
-                style={{
-                  marginTop: '1rem',
-                  padding: '1.25rem 1.5rem',
-                  borderRadius: '10px',
-                  background: 'rgba(79, 172, 254, 0.04)',
-                  border: '1px solid rgba(79, 172, 254, 0.1)',
-                }}
+                className="full-brief-content"
               >
                 {marketState.expandedSummary.split('\n').map((line, i) => {
                   const trimmed = line.trim();
@@ -152,22 +133,17 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-            gap: '1rem',
-            marginBottom: '1.5rem',
-          }}
+          className="dashboard-signals-grid"
         >
           {buySignals.length > 0 && (
-            <div className="glass-panel" style={{ padding: '1.25rem', borderLeft: '3px solid var(--score-positive)' }}>
-              <h4 style={{ fontSize: '0.75rem', color: 'var(--score-positive)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.75rem' }}>
+            <div className="glass-panel signal-card signal-card-buy">
+              <h4 className="signal-card-header" style={{ color: 'var(--score-positive)' }}>
                 ⬆ Starkaste köpsignaler
               </h4>
               {buySignals.sort((a, b) => b.finalScore - a.finalScore).slice(0, 3).map(a => {
                 const BuyIcon = a.icon;
                 return (
-                <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                <div key={a.id} className="signal-row">
                   <span style={{ fontWeight: 500, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><BuyIcon size={14} color={a.color} /> {a.name}</span>
                   <span style={{ fontWeight: 700, color: 'var(--score-positive)', fontSize: '0.9rem' }}>+{a.finalScore.toFixed(1)}</span>
                 </div>
@@ -176,14 +152,14 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
           )}
 
           {sellSignals.length > 0 && (
-            <div className="glass-panel" style={{ padding: '1.25rem', borderLeft: '3px solid var(--score-negative)' }}>
-              <h4 style={{ fontSize: '0.75rem', color: 'var(--score-negative)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.75rem' }}>
+            <div className="glass-panel signal-card signal-card-sell">
+              <h4 className="signal-card-header" style={{ color: 'var(--score-negative)' }}>
                 ⬇ Starkaste säljsignaler
               </h4>
               {sellSignals.sort((a, b) => a.finalScore - b.finalScore).slice(0, 3).map(a => {
                 const SellIcon = a.icon;
                 return (
-                <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                <div key={a.id} className="signal-row">
                   <span style={{ fontWeight: 500, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}><SellIcon size={14} color={a.color} /> {a.name}</span>
                   <span style={{ fontWeight: 700, color: 'var(--score-negative)', fontSize: '0.9rem' }}>{a.finalScore.toFixed(1)}</span>
                 </div>
@@ -199,16 +175,12 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.15 }}
       >
-        <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <h3 className="dashboard-assets-header">
           <Activity size={18} color="var(--accent-blue)" />
           Alla tillgångar ({assets.length})
         </h3>
 
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-          gap: '0.75rem',
-        }}>
+        <div className="dashboard-assets-grid">
           {sorted.map(asset => {
             const p = prices[asset.id];
             const isSelected = selectedAssetId === asset.id;
@@ -216,19 +188,13 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
             return (
               <motion.div
                 key={asset.id}
-                className="glass-panel"
+                className={`glass-panel asset-card ${isSelected ? 'selected' : ''}`}
                 whileHover={{ scale: 1.01 }}
                 onClick={() => setSelectedAssetId(isSelected ? null : asset.id)}
-                style={{
-                  padding: '1rem 1.25rem',
-                  cursor: 'pointer',
-                  border: isSelected ? '1px solid rgba(79, 172, 254, 0.3)' : undefined,
-                  background: isSelected ? 'rgba(79, 172, 254, 0.06)' : undefined,
-                }}
               >
                 {/* Asset Header */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                <div className="asset-card-header">
+                  <div className="asset-info">
                     <AssetIconBadge icon={asset.icon} color={asset.color} />
                     <div>
                       <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{asset.name}</div>
@@ -252,10 +218,7 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
                 </div>
 
                 {/* Agent Scores Row */}
-                <div style={{
-                  display: 'flex', gap: '0.5rem', marginTop: '0.75rem',
-                  flexWrap: 'wrap',
-                }}>
+                <div className="asset-agents-row">
                   {['macro', 'micro', 'sentiment', 'tech'].map(agent => {
                     const agentScore = (asset.scores as any)?.[agent] ?? 0;
                     return (
@@ -279,14 +242,7 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
                     <PriceChart assetId={asset.id} assetName={asset.name} height={200} />
                     <button
                       onClick={(e) => { e.stopPropagation(); setDetailAsset(asset); }}
-                      style={{
-                        marginTop: '0.75rem', width: '100%', padding: '0.6rem',
-                        background: 'linear-gradient(135deg, rgba(79, 172, 254, 0.1), rgba(157, 78, 221, 0.1))',
-                        border: '1px solid rgba(79, 172, 254, 0.2)', borderRadius: '8px',
-                        color: 'var(--accent-blue)', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
-                        fontFamily: 'var(--font-body)',
-                      }}
+                      className="btn-deep-dive"
                     >
                       🔬 Djupdyk — Se alla agenters analys
                       <ArrowRight size={14} />
@@ -304,10 +260,10 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.25 }}
-        style={{ marginTop: '2rem', textAlign: 'center' }}
+        className="cta-portfolio"
       >
         <Link to="/portfolio" style={{ textDecoration: 'none' }}>
-          <button className="button-primary" style={{ fontSize: '1rem', padding: '0.85rem 2rem' }}>
+          <button className="button-primary">
             💼 Se portföljrekommendation
           </button>
         </Link>

@@ -35,8 +35,8 @@ TONALITET: Professionell men ej torr. Insiktsfull. Koppla alltid till portfoljpa
 
 STRUKTUR (hyll exakt denna):
 1. RUBRIK — En stark, nyhetsmassig rubrik (max 10 ord)
-2. OVERNIGHT — Vad hande sedan marknaden stangde igår? (3-4 meningar)
-3. GEOPOLITIK — Pagaende konflikter, tullar, centralbanksbeslut och deras marknadspaverkan (2-3 meningar)
+2. NATTENS MARKNADER (USA & ASIEN) — Sammanfatta stangningen pa Wall Street igår kvall och nattens rorelser i Asien. Hur satter detta tonen infor den svenska/europeiska borsuppningen? Garna specifika indexnivaer. (3-4 meningar)
+3. VARLDSBILD & POLITISK SPANNING — Ge en kansla av att vi bevakar varlden. Finns det pagaende geopolitiska spanningar, varningar om krig, eller viktiga beslut fran centralbanker som ligger som en vat filt eller katalysator? (2-3 meningar)
 4. DAGENS FOKUS — Vad ska vi bevaka idag? Vilka risker/mojligheter? (2-3 meningar)
 5. PORTFOLJPOSITION — Hur star var portfolj positionerad infor detta? Vad skyddar oss? (2-3 meningar)
 
@@ -62,16 +62,16 @@ REGLER:
 
 
 EVENING_BRIEF_PROMPT = """Du ar Chief Investment Officer pa en av Scandinaviens mest framgangsrika
-hedgefonder. Skriv kvallens sammanfattning till fondens investerare.
+hedgefonder. Skriv eftermiddagens uppdatering (inför Wall Street-öppningen kl 14:30) till fondens investerare.
 
-TONALITET: Analytisk, eftertanksam. Racknar ut dagen som gick och vad det betyder framat.
+TONALITET: Analytisk och framåtblickande. Sammanfatta den svenska handelsdagen hittills och blicka mot USA.
 
 STRUKTUR (folj exakt denna):
-1. RUBRIK — En sammanfattande rubrik for dagen (max 10 ord)
-2. DAGENSSAMMANFATTNING — Vad hande pa marknaderna idag? Nyckelsiffror. (3-4 meningar)
-3. VARFOR DET HANDE — Underliggande drivkrafter, inte bara symptom (2-3 meningar)
-4. PORTFOLJAVKASTNING — Hur gick det for var portfolj idag? Vilka beslut hjalpte/skadade? (2-3 meningar)
-5. IMORGON — Vad innebar dagens utveckling for morgondagen? (2 meningar)
+1. RUBRIK — En sammanfattande rubrik för dagen (max 10 ord)
+2. DAGEN I SVERIGE/EUROPA — Hur har den svenska börsen (OMX) och Europa gått hittills idag? Vilka är de drivande faktorerna bakom rörelserna? (3-4 meningar)
+3. INFÖR WALL STREET — Investerare väntar på USA. Hur ser det ut inför öppningen? Vad pekar terminerna på och framförallt varför? Någon viktig makrodata att invänta? (2-3 meningar)
+4. PORTFÖLJAVKASTNING — Hur går vår portfölj idag? (2-3 meningar)
+5. IMORGON — Vad innebar dagens utveckling för morgondagen? (2 meningar)
 
 AKTUELL KONTEXT:
 {context}

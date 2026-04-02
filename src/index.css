@@ -324,6 +324,208 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .score-progress-bar.positive { background: linear-gradient(90deg, transparent, var(--score-positive)); }
+.text-success { color: var(--score-positive); }
+.text-danger { color: var(--score-negative); }
+
+/* ============================================
+   DASHBOARD COMPONENTS & MOBILE-FIRST LAYOUT
+   ============================================ */
+.dashboard-main {
+  /* Use safe-area-inset for modern iOS home bar */
+  padding: 1.5rem 1rem calc(6rem + env(safe-area-inset-bottom));
+}
+
+@media (min-width: 768px) {
+  .dashboard-main {
+    padding: 2rem 1.5rem calc(6rem + env(safe-area-inset-bottom));
+  }
+}
+
+.dashboard-hero {
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+@media (min-width: 768px) {
+  .dashboard-hero {
+    padding: 1.75rem 2rem;
+  }
+}
+
+.dashboard-hero-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.dashboard-hero-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.dashboard-hero-badges {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.dashboard-hero-summary {
+  font-size: 0.95rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.btn-full-brief {
+  background: rgba(79, 172, 254, 0.08);
+  border: 1px solid rgba(79, 172, 254, 0.2);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.2s ease;
+  font-family: var(--font-body);
+}
+
+.btn-full-brief:hover {
+  background: rgba(79, 172, 254, 0.15);
+}
+
+.full-brief-content {
+  margin-top: 1rem;
+  padding: 1.25rem;
+  border-radius: 10px;
+  background: rgba(79, 172, 254, 0.04);
+  border: 1px solid rgba(79, 172, 254, 0.1);
+}
+
+.dashboard-signals-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+@media (min-width: 600px) {
+  .dashboard-signals-grid {
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+}
+
+.signal-card {
+  padding: 1.25rem;
+}
+
+.signal-card-buy {
+  border-left: 3px solid var(--score-positive);
+}
+
+.signal-card-sell {
+  border-left: 3px solid var(--score-negative);
+}
+
+.signal-card-header {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.75rem;
+}
+
+.signal-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.dashboard-assets-header {
+  font-size: 1.1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.dashboard-assets-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+
+@media (min-width: 600px) {
+  .dashboard-assets-grid {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  }
+}
+
+.asset-card {
+  padding: 1.25rem;
+  cursor: pointer;
+}
+
+.asset-card.selected {
+  border: 1px solid rgba(79, 172, 254, 0.3);
+  background: rgba(79, 172, 254, 0.06);
+}
+
+.asset-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.asset-info {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.asset-agents-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.btn-deep-dive {
+  margin-top: 0.75rem;
+  width: 100%;
+  padding: 0.7rem;
+  background: linear-gradient(135deg, rgba(79, 172, 254, 0.1), rgba(157, 78, 221, 0.1));
+  border: 1px solid rgba(79, 172, 254, 0.2);
+  border-radius: 8px;
+  color: var(--accent-blue);
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  font-family: var(--font-body);
+}
+
+.btn-deep-dive:hover {
+  background: linear-gradient(135deg, rgba(79, 172, 254, 0.2), rgba(157, 78, 221, 0.2));
+}
+
+.cta-portfolio {
+  margin-top: 2rem;
+  text-align: center;
+}
+
+.cta-portfolio button {
+  font-size: 1rem;
+  padding: 0.85rem 2rem;
+  border-radius: 12px;
+}
 .score-progress-bar.negative { background: linear-gradient(90deg, var(--score-negative), transparent); }
 .score-progress-bar.neutral { background: var(--score-neutral); }
 
