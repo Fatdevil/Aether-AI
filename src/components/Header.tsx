@@ -18,6 +18,7 @@ export default function Header({ marketState }: HeaderProps) {
   const navLinks = [
     { path: '/', label: 'Marknad' },
     { path: '/analysis', label: 'Analys' },
+    { path: '/brief', label: 'Rapport' },
     { path: '/portfolio', label: 'Portfölj' },
     { path: '/insights', label: 'AI Insikter' },
   ];

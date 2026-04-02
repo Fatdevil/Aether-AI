@@ -10,6 +10,7 @@ import Dashboard from './pages/Dashboard';
 import AnalysisPage from './pages/AnalysisPage';
 import MyPortfolioPage from './pages/MyPortfolioPage';
 import InsightsPage from './pages/InsightsPage';
+import BriefPage from './pages/BriefPage';
 import ChatPanel from './components/ChatPanel';
 
 import './index.css';
@@ -87,6 +88,7 @@ function AppContent() {
           <Route path="/analysis" element={<AnalysisPage />} />
           <Route path="/portfolio" element={<MyPortfolioPage />} />
           <Route path="/insights" element={<InsightsPage />} />
+          <Route path="/brief" element={<BriefPage />} />
         </Routes>
       </ErrorBoundary>
       <MobileNav />

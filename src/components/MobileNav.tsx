@@ -1,4 +1,4 @@
-import { LayoutDashboard, Search, Briefcase, Brain } from 'lucide-react';
+import { LayoutDashboard, Search, Briefcase, Brain, FileText } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
 export default function MobileNav() {
@@ -7,6 +7,7 @@ export default function MobileNav() {
   const tabs = [
     { path: '/', label: 'Marknad', icon: LayoutDashboard },
     { path: '/analysis', label: 'Analys', icon: Search },
+    { path: '/brief', label: 'Rapport', icon: FileText },
     { path: '/portfolio', label: 'Portfölj', icon: Briefcase },
     { path: '/insights', label: 'AI', icon: Brain },
   ];
