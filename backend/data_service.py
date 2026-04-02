@@ -132,32 +132,37 @@ class DataService:
         logger.info("📰 Fetching news...")
         self.news = fetch_all_news()
 
-        # 2a. News Scout — ranks top stories + stamps impact_sv (Gemini Flash, ~$0.002)
-        logger.info("🔍 Running news scout...")
-        try:
-            from news_service import get_news_scout
-            scout_result = await get_news_scout(self.news)
-            self.news_scout_digest = scout_result.get("digest", "")
-            if self.news_scout_digest:
-                logger.info(f"  📋 Scout digest ready ({len(self.news_scout_digest)} chars)")
-        except Exception as e:
-            logger.warning(f"Scout error: {e}")
-            self.news_scout_digest = ""
+        # 2a/2b: AI News Analysis (Tier 1, runs on a schedule to save API cost)
+        if scheduler.should_refresh("news_sentiment"):
+            # 2a. News Scout — ranks top stories + stamps impact_sv (Gemini Flash, ~$0.002)
+            logger.info("🔍 Running news scout...")
+            try:
+                from news_service import get_news_scout
+                scout_result = await get_news_scout(self.news)
+                self.news_scout_digest = scout_result.get("digest", "")
+                if self.news_scout_digest:
+                    logger.info(f"  📋 Scout digest ready ({len(self.news_scout_digest)} chars)")
+            except Exception as e:
+                logger.warning(f"Scout error: {e}")
+                self.news_scout_digest = ""
 
-        # 2b. Run news sentinel (AI impact scoring) - Tier 1 (cheap)
-        logger.info("🚨 Running news sentinel...")
-        try:
-            new_alerts = await sentinel.scan_news(self.news)
-            if new_alerts:
-                logger.info(f"🚨 Sentinel: {len(new_alerts)} alerts triggered!")
-                # Critical alerts trigger Tier 2 re-analysis
-                critical = [a for a in new_alerts if a.get("impact_score", 0) >= 7]
-                if critical:
-                    scheduler.force_refresh("full_analysis")
-                    logger.info(f"⚡ {len(critical)} critical alerts → forced full analysis!")
-        except Exception as e:
-            logger.warning(f"Sentinel error: {e}")
-        scheduler.mark_refreshed("news_sentiment")
+            # 2b. Run news sentinel (AI impact scoring) - Tier 1 (cheap)
+            logger.info("🚨 Running news sentinel...")
+            try:
+                new_alerts = await sentinel.scan_news(self.news)
+                if new_alerts:
+                    logger.info(f"🚨 Sentinel: {len(new_alerts)} alerts triggered!")
+                    # Critical alerts trigger Tier 2 re-analysis
+                    critical = [a for a in new_alerts if a.get("impact_score", 0) >= 7]
+                    if critical:
+                        scheduler.force_refresh("full_analysis")
+                        logger.info(f"⚡ {len(critical)} critical alerts → forced full analysis!")
+            except Exception as e:
+                logger.warning(f"Sentinel error: {e}")
+            
+            scheduler.mark_refreshed("news_sentiment")
+        else:
+            logger.info("⏭️ Skipping AI news analysis (not due yet)")
 
 
         # 3. Run AI analysis on each asset - Tier 2 (medium cost)

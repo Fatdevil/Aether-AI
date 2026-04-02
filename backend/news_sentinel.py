@@ -62,7 +62,7 @@ class NewsSentinel:
             "critical_alerts": 0,
             "last_scan": None,
         }
-        self._seen_titles: set[str] = set()  # Dedup
+        self._seen_titles: list[str] = []  # Dedup list to maintain order (LIFO)
 
     async def scan_news(self, news_items: list[dict]) -> list[dict]:
         """
@@ -73,15 +73,16 @@ class NewsSentinel:
         for item in news_items:
             title = item.get("title", "")
             if title and title not in self._seen_titles:
-                self._seen_titles.add(title)
+                self._seen_titles.append(title)
                 new_items.append(item)
 
         if not new_items:
             return []
 
-        # Keep dedup set manageable
+        # Keep dedup list manageable (FIFO cache)
         if len(self._seen_titles) > 1000:
-            self._seen_titles = set(list(self._seen_titles)[-500:])
+            # We use list to maintain insertion order (newest at the end).
+            self._seen_titles = self._seen_titles[-500:]
 
         # Political Intelligence v2: lazy-load engine for sentinel integration
         political_engine = None
