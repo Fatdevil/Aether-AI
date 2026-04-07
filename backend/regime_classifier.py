@@ -21,6 +21,7 @@ logger = logging.getLogger("aether.regime_classifier")
 
 MODEL_DIR = Path(__file__).parent / "models"
 MODEL_PATH = MODEL_DIR / "regime_classifier.joblib"
+MODEL_V2_PATH = MODEL_DIR / "regime_rf_v2_enriched.joblib"  # Fas 7: 31-feature enriched model
 
 
 # ============================================================
@@ -361,11 +362,15 @@ def train_model(X: pd.DataFrame, y: pd.Series, save: bool = True):
 
 
 def load_model():
-    """Ladda tränad modell från disk."""
+    """Ladda tränad modell från disk. Föredrar v2 (31 features) om tillgänglig."""
     import joblib
-    if not MODEL_PATH.exists():
-        raise FileNotFoundError(f"No trained model at {MODEL_PATH}. Run train_model() first.")
-    return joblib.load(MODEL_PATH)
+    if MODEL_V2_PATH.exists():
+        logger.info("  📦 Loading v2 enriched model (31 features)")
+        return joblib.load(MODEL_V2_PATH), "v2"
+    if MODEL_PATH.exists():
+        logger.info("  📦 Loading v1 base model (15 features)")
+        return joblib.load(MODEL_PATH), "v1"
+    raise FileNotFoundError(f"No trained model found. Run train_model() first.")
 
 
 # ============================================================
@@ -481,7 +486,7 @@ def walk_forward_validation(X: pd.DataFrame, y: pd.Series) -> Dict:
 def get_feature_importance(model=None, feature_names=None) -> pd.DataFrame:
     """Returnera feature importance sorterat fallande."""
     if model is None:
-        model = load_model()
+        model, _ = load_model()
     if feature_names is None:
         feature_names = FEATURE_NAMES
 
@@ -657,30 +662,48 @@ def detect_secondary_regime(enrichment: Dict) -> Dict:
 # DEL F: INTEGRATION MED BEFINTLIG REGIMDETEKTERING
 # ============================================================
 
-def detect_regime_ml(features_dict: Dict) -> Dict:
+def detect_regime_ml(features_dict: Dict, enrichment_features: Dict = None) -> Dict:
     """
     Prediktera regim med tränad ML-modell.
     
     Args:
-        features_dict: Dict med samma nycklar som FEATURE_NAMES.
-                       Kan komma från live-data eller historisk data.
+        features_dict: Dict med 15 base features.
+        enrichment_features: Optional dict med enrichment features.
+                             Om v2-modell är laddad OCH enrichment finns → 31-feature prediction.
+                             Annars → 15-feature prediction.
     
     Returns:
         {"regime": "risk-on", "confidence": 0.72, "probabilities": {...}, "method": "ml"}
     """
     try:
-        model = load_model()
+        model, model_version = load_model()
     except FileNotFoundError:
         logger.warning("No trained model found. Falling back to rule-based.")
         return None
 
+    # Bestäm vilka features att använda baserat på modellversion
+    if model_version == "v2" and enrichment_features:
+        # V2: 31 features (15 base + 16 enrichment)
+        enriched = build_enriched_features(features_dict, enrichment_features)
+        use_features = FEATURE_NAMES + ENRICHMENT_FEATURE_NAMES
+        feature_source = enriched
+        logger.info(f"  🔬 Using v2 model with {len(use_features)} enriched features")
+    else:
+        # V1: 15 base features
+        use_features = FEATURE_NAMES
+        feature_source = features_dict
+        if model_version == "v2" and not enrichment_features:
+            logger.warning("  ⚠️ V2 model loaded but no enrichment data — using base features only")
+
     # Bygg feature-vektor i rätt ordning
     feature_values = []
-    for name in FEATURE_NAMES:
-        val = features_dict.get(name)
+    for name in use_features:
+        val = feature_source.get(name)
         if val is None or (isinstance(val, float) and np.isnan(val)):
-            logger.warning(f"Missing feature: {name}. Falling back to rule-based.")
-            return None
+            val = ENRICHMENT_DEFAULTS.get(name, 0) if name in ENRICHMENT_FEATURE_NAMES else None
+            if val is None:
+                logger.warning(f"Missing feature: {name}. Falling back to rule-based.")
+                return None
         feature_values.append(float(val))
 
     X = np.array([feature_values])
@@ -703,7 +726,9 @@ def detect_regime_ml(features_dict: Dict) -> Dict:
         "regime": regime_name,
         "confidence": round(confidence, 3),
         "probabilities": prob_dict,
-        "method": "ml",
+        "method": f"ml-{model_version}",
+        "model_version": model_version,
+        "n_features": len(use_features),
         "predicted_class": int(prediction),
     }
 
@@ -786,24 +811,17 @@ def detect_regime_with_fallback(enrichment_features: Dict = None) -> Dict:
 
     Returnerar alltid ett giltigt resultat.
     """
-    # Försök ML först
+    # Försök ML först — v2 (31 features) om enrichment tillgängligt, annars v1 (15)
     try:
         live_features = compute_live_features()
         if live_features:
-            ml_result = detect_regime_ml(live_features)
+            ml_result = detect_regime_ml(live_features, enrichment_features=enrichment_features)
             if ml_result and ml_result.get("confidence", 0) > 0.4:
-                logger.info(f"  🤖 ML regime: {ml_result['regime']} (conf: {ml_result['confidence']:.0%})")
-
-                # Fas 7: Log enrichment features alongside ML prediction
-                # (Not used in prediction yet — requires retraining with backfilled data)
-                if enrichment_features:
-                    enriched = build_enriched_features(live_features, enrichment_features)
-                    ml_result["enrichment_available"] = True
-                    ml_result["enrichment_feature_count"] = len(enrichment_features)
-                    logger.info(f"  🔬 Enrichment: {len(enrichment_features)} features attached (31 total)")
-                else:
-                    ml_result["enrichment_available"] = False
-
+                version = ml_result.get('model_version', 'v1')
+                n_feat = ml_result.get('n_features', 15)
+                logger.info(f"  🤖 ML regime ({version}, {n_feat}f): {ml_result['regime']} "
+                           f"(conf: {ml_result['confidence']:.0%})")
+                ml_result["enrichment_available"] = enrichment_features is not None
                 return ml_result
             elif ml_result:
                 logger.info(f"  🤖 ML regime low confidence ({ml_result['confidence']:.0%}), using fallback")
