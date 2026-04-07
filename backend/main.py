@@ -39,7 +39,7 @@ from api_cost_tracker import APICostTracker
 from predictive import (CausalChainEngine, EventTreeEngine, LeadLagDetector, NarrativeTracker,
                         PredictiveOrchestrator, MarketActorSimulation, ConvexityOptimizer,
                         ConfidenceCalibrator, MetaStrategySelector, AdversarialAgent,
-                        PoliticalIntelligenceEngine)
+                        PoliticalIntelligenceEngine, PredictionMarketIntelligence)
 from data_enrichment import DataEnrichmentLoader
 from regime_classifier import detect_secondary_regime
 from daily_scheduler import DailyScheduler
@@ -76,6 +76,7 @@ meta_strategy = MetaStrategySelector()
 adversarial = AdversarialAgent()
 political_engine = PoliticalIntelligenceEngine()
 enrichment_loader = DataEnrichmentLoader()  # Fas 7: Data Enrichment
+prediction_markets = PredictionMarketIntelligence()  # Fas 8: Polymarket
 health_check = SystemHealthCheck()
 
 # Omega portfolio (scenario-based A/B testing)
@@ -617,7 +618,38 @@ async def _run_full_pipeline() -> dict:
                 "inflation_signal": secondary_regime.get("inflation_signal", 0),
             },
         }
-        logger.info(f"🔮 L3 PREDICTIVE: {len(ll_signals)} lead-lag, {len(convex)} convex, {len(narr_signals)} narrative, political={political_state.get('political_risk', 'NORMAL')}")
+
+        # Fas 8: Prediction Markets — hämta odds och detektera rörelser
+        pm_result = {"markets_tracked": 0, "movements_detected": 0, "pipeline_signals": [], "contrarian_signals": [], "political_confirmations": []}
+        pm_signals = []
+        try:
+            pm_result = await prediction_markets.run_daily_analysis()
+            pm_signals = pm_result.get("pipeline_signals", [])
+            pm_contrarian = pm_result.get("contrarian_signals", [])
+            pm_confirms = pm_result.get("political_confirmations", [])
+
+            # Jämför med Political Intelligence — divergensdetektering
+            if pm_confirms and political_state.get("direct_signals"):
+                for conf in pm_confirms:
+                    q = conf.get("market_question", "").lower()
+                    for pol_sig in political_state["direct_signals"]:
+                        pol_text = str(pol_sig).lower()
+                        # Om samma ämne men olika riktning = divergens
+                        shared_keywords = [kw for kw in ["iran", "tariff", "war", "recession"] if kw in q and kw in pol_text]
+                        if shared_keywords:
+                            logger.info(f"  🔗 PM↔PI match: {shared_keywords[0]} — PM odds {conf.get('odds_direction')}, PI confirms")
+
+            layers_log["L3_predictive"]["prediction_markets"] = {
+                "markets_tracked": pm_result.get("markets_tracked", 0),
+                "movements": pm_result.get("movements_detected", 0),
+                "major_movements": len(pm_result.get("major_movements", [])),
+                "signals": len(pm_signals),
+                "contrarian": len(pm_contrarian),
+            }
+        except Exception as e:
+            logger.warning(f"Prediction markets failed (non-fatal): {e}")
+
+        logger.info(f"🔮 L3 PREDICTIVE: {len(ll_signals)} lead-lag, {len(convex)} convex, {len(narr_signals)} narrative, political={political_state.get('political_risk', 'NORMAL')}, PM={pm_result.get('markets_tracked', 0)}")
 
         # ================================================================
         # LAYER 4: ANALYSIS (Regime, Vol, Calendar, DomainKnowledge)
@@ -707,6 +739,8 @@ async def _run_full_pipeline() -> dict:
             # Fas 7: Enrichment signals + secondary regime
             enrichment_signals=enrichment_signals,
             secondary_regime=secondary_regime,
+            # Fas 8: Prediction market signals
+            prediction_market_signals=pm_signals,
         )
 
         final_scores = synthesis.get("final_scores", {})
@@ -1116,6 +1150,58 @@ async def get_secondary_regime(request: Request):
         }
     except Exception as e:
         logger.error(f"Secondary regime failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+# ---- Fas 8: Prediction Markets endpoints ----
+
+@app.get("/api/prediction-markets")
+@limiter.limit("10/minute")
+async def get_prediction_markets_dashboard(request: Request):
+    """Hämta senaste prediction market-odds, rörelser och signaler."""
+    try:
+        return {"status": "ok", **prediction_markets.get_dashboard()}
+    except Exception as e:
+        logger.error(f"PM dashboard failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@app.get("/api/prediction-markets/movements")
+@limiter.limit("10/minute")
+async def get_pm_movements(request: Request, hours: int = 48):
+    """Hämta oddsrörelser senaste N timmar."""
+    cutoff = datetime.now() - timedelta(hours=hours)
+    recent = [
+        m.__dict__ for m in prediction_markets.movements
+        if datetime.fromisoformat(m.timestamp) > cutoff
+    ]
+    return {"movements": recent, "count": len(recent), "period_hours": hours}
+
+
+@app.get("/api/prediction-markets/top")
+@limiter.limit("5/minute")
+async def get_top_pm_markets(request: Request):
+    """Hämta top-volymmarknader från Polymarket."""
+    try:
+        markets = await prediction_markets.fetch_relevant_markets(max_markets=20)
+        return {
+            "markets": sorted(markets, key=lambda x: x.get("volume_24h", 0), reverse=True)[:15],
+            "count": len(markets),
+        }
+    except Exception as e:
+        logger.error(f"PM top markets failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/api/prediction-markets/refresh")
+@limiter.limit("2/minute")
+async def refresh_prediction_markets_endpoint(request: Request):
+    """Manuell trigger av prediction market-analys."""
+    try:
+        result = await prediction_markets.run_daily_analysis()
+        return {"status": "ok", **result}
+    except Exception as e:
+        logger.error(f"PM refresh failed: {e}")
         return {"status": "error", "error": str(e)}
 
 

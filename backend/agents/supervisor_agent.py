@@ -177,6 +177,8 @@ class SupervisorAgent(BaseAgent):
         # Fas 7: Enrichment signals + secondary regime
         enrichment_signals: list = None,  # Direct signals from DataEnrichmentLoader
         secondary_regime: dict = None,    # From detect_secondary_regime()
+        # Fas 8: Prediction market signals
+        prediction_market_signals: list = None,  # From PredictionMarketIntelligence
     ) -> dict:
         """
         CENTRAL SYNTHESIS METHOD — Pipeline B (6h autonomous)
@@ -327,6 +329,32 @@ class SupervisorAgent(BaseAgent):
                             direction = -1  # Most signals are defensive (reduce risk)
 
                         score += direction * strength * 0.20  # Weighted at 0.20 for data-driven signals
+
+            # Fas 8: Prediction market signals
+            # These are odds-movement signals from Polymarket
+            if prediction_market_signals and isinstance(prediction_market_signals, list):
+                for pm_sig in prediction_market_signals:
+                    pm_affected = pm_sig.get("affected_assets", [])
+                    if asset in pm_affected or asset.upper() in [a.upper() for a in pm_affected]:
+                        # Weight by significance: NOTABLE=0.3, MAJOR=0.6, EXTREME=1.0
+                        sig_type = pm_sig.get("signal", "")
+                        if "EXTREME" in sig_type:
+                            pm_weight = 1.0
+                        elif "MAJOR" in sig_type:
+                            pm_weight = 0.6
+                        else:
+                            pm_weight = 0.3
+
+                        # Direction from implication
+                        impl = pm_sig.get("implication", "").upper()
+                        if any(w in impl for w in ["BULLISH", "RISK_ON", "RELIEF"]):
+                            pm_direction = 1
+                        elif any(w in impl for w in ["BEARISH", "RISK_OFF", "CRISIS"]):
+                            pm_direction = -1
+                        else:
+                            pm_direction = -0.5  # Default to slightly defensive for uncertainty
+
+                        score += pm_direction * pm_weight * 0.15  # 0.15 weight for prediction markets
 
             # Apply vol_adjustment and conf_multiplier
             score *= vol_adjustment.get(asset, 1.0)

@@ -15,6 +15,7 @@ from .confidence_calibrator import ConfidenceCalibrator
 from .meta_strategy import MetaStrategySelector
 from .adversarial_agent import AdversarialAgent
 from .political_intelligence import PoliticalIntelligenceEngine
+from .prediction_markets import PredictionMarketIntelligence
 
 __all__ = [
     "CausalChainEngine",
@@ -28,4 +29,7 @@ __all__ = [
     "ConfidenceCalibrator",
     "MetaStrategySelector",
     "AdversarialAgent",
+    "PoliticalIntelligenceEngine",
+    "PredictionMarketIntelligence",
 ]
+
