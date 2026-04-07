@@ -183,12 +183,50 @@ class PredictionMarketIntelligence:
         """
         Sök Polymarket Gamma API efter marknadsrelevanta marknader.
         Gamma API är helt öppet — ingen API-nyckel behövs.
+
+        Söktermer = statisk bas (MARKET_SEARCH_TERMS)
+                  + dynamiska termer från News Sentinel (impact ≥5)
         """
+        # Statisk bas — söks ALLTID
+        search_terms = list(MARKET_SEARCH_TERMS)
+
+        # Dynamiska termer från Sentinel-alerts
+        dynamic_added = []
+        try:
+            from news_sentinel import sentinel
+            alerts = sentinel.get_alerts(min_impact=5)
+            # Ord att aldrig lägga till (stoppord)
+            stopwords = {
+                "about", "their", "would", "could", "should", "after", "before",
+                "which", "there", "these", "those", "where", "while", "under",
+                "being", "other", "still", "today", "market", "markets", "says",
+                "report", "reports", "according", "could", "price", "prices",
+            }
+            existing_lower = {t.lower() for t in search_terms}
+
+            for alert in alerts[:10]:
+                title = alert.get("title", "")
+                words = title.split()
+                for word in words:
+                    clean = word.strip(",.!?:;\"'()[]").capitalize()
+                    if (len(clean) > 4
+                            and clean.lower() not in existing_lower
+                            and clean.lower() not in stopwords):
+                        search_terms.append(clean)
+                        existing_lower.add(clean.lower())
+                        dynamic_added.append(clean)
+                        break  # Max 1 ny term per alert
+
+            if dynamic_added:
+                logger.info(f"  🔍 PM dynamic terms from Sentinel: {', '.join(dynamic_added)}")
+        except Exception:
+            pass  # Fallback till statisk lista
+
         markets = []
         seen_ids = set()
 
         async with httpx.AsyncClient(timeout=15.0) as client:
-            for term in MARKET_SEARCH_TERMS:
+            for term in search_terms:
                 try:
                     resp = await client.get(
                         f"{GAMMA_API}/markets",
@@ -239,7 +277,8 @@ class PredictionMarketIntelligence:
             except Exception:
                 pass
 
-        logger.info(f"📊 Fetched {len(markets)} prediction markets from Polymarket")
+        logger.info(f"📊 Fetched {len(markets)} prediction markets "
+                    f"({len(MARKET_SEARCH_TERMS)} static + {len(dynamic_added)} dynamic terms)")
         return markets[:max_markets]
 
     def _parse_market(self, raw: Dict) -> Dict:
