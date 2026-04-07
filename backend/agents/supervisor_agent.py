@@ -174,6 +174,9 @@ class SupervisorAgent(BaseAgent):
         domain_knowledge: str = "",
         calibration_adjustment=None,   # callable from ConfidenceCalibrator
         political_signals: dict = None, # From PoliticalIntelligenceEngine
+        # Fas 7: Enrichment signals + secondary regime
+        enrichment_signals: list = None,  # Direct signals from DataEnrichmentLoader
+        secondary_regime: dict = None,    # From detect_secondary_regime()
     ) -> dict:
         """
         CENTRAL SYNTHESIS METHOD — Pipeline B (6h autonomous)
@@ -306,6 +309,24 @@ class SupervisorAgent(BaseAgent):
                                 impact_pct = est_impact[asset]
                                 prob = pred.get("probability", 0.5)
                                 score += impact_pct * prob * 0.1 * pol_weight
+
+            # Fas 7: Enrichment direct signals
+            # These are strong data-driven signals (VIX backwardation, breadth divergence, etc.)
+            if enrichment_signals and isinstance(enrichment_signals, list):
+                for sig in enrichment_signals:
+                    affected = sig.get("affected_assets", [])
+                    if asset in affected or asset.lower() in [a.lower() for a in affected]:
+                        strength_map = {"CRITICAL": 3.0, "HIGH": 2.0, "MEDIUM": 1.0}
+                        strength = strength_map.get(sig.get("strength", ""), 1.0)
+                        action = sig.get("action", "")
+
+                        # Determine direction from action
+                        if "KOP" in action.upper() or "OKA_GULD" in action.upper():
+                            direction = 1
+                        else:
+                            direction = -1  # Most signals are defensive (reduce risk)
+
+                        score += direction * strength * 0.20  # Weighted at 0.20 for data-driven signals
 
             # Apply vol_adjustment and conf_multiplier
             score *= vol_adjustment.get(asset, 1.0)

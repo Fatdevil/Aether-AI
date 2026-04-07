@@ -134,7 +134,7 @@ def label_dates(dates: pd.DatetimeIndex) -> pd.Series:
 
 
 # ============================================================
-# DEL B: FEATURE ENGINEERING (15 features)
+# DEL B: FEATURE ENGINEERING (15 base + 16 enrichment features)
 # ============================================================
 
 FEATURE_NAMES = [
@@ -154,6 +154,46 @@ FEATURE_NAMES = [
     "copper_roc_10d",
     "em_vs_sp500_20d",
 ]
+
+# Fas 7: 16 enrichment features (from DataEnrichmentLoader)
+ENRICHMENT_FEATURE_NAMES = [
+    "credit_spread_level",
+    "credit_spread_change_10d",
+    "breakeven_inflation_proxy",
+    "commodity_index_roc_20d",
+    "liquidity_proxy_roc_20d",
+    "copper_roc_20d",
+    "gold_positioning_percentile",
+    "equity_positioning_percentile",
+    "breadth_ratio_change_20d",
+    "breadth_divergence",
+    "vix_term_structure",
+    "vix_in_backwardation",
+    "vix_fear_ratio",
+    "avg_cross_correlation_20d",
+    "correlation_regime_break",
+    "mom_12m1m_spy",
+]
+
+# Defaults for when enrichment features are missing
+ENRICHMENT_DEFAULTS = {
+    "credit_spread_level": 0,
+    "credit_spread_change_10d": 0,
+    "breakeven_inflation_proxy": 0,
+    "commodity_index_roc_20d": 0,
+    "liquidity_proxy_roc_20d": 0,
+    "copper_roc_20d": 0,
+    "gold_positioning_percentile": 50,
+    "equity_positioning_percentile": 50,
+    "breadth_ratio_change_20d": 0,
+    "breadth_divergence": 0,
+    "vix_term_structure": 0,
+    "vix_in_backwardation": 0,
+    "vix_fear_ratio": 1.0,
+    "avg_cross_correlation_20d": 0.25,
+    "correlation_regime_break": 0,
+    "mom_12m1m_spy": 0,
+}
 
 
 def compute_regime_features(prices: pd.DataFrame) -> pd.DataFrame:
@@ -455,7 +495,162 @@ def get_feature_importance(model=None, feature_names=None) -> pd.DataFrame:
 
 
 # ============================================================
-# DEL E: INTEGRATION MED BEFINTLIG REGIMDETEKTERING
+# DEL E-FAS7: ENRICHED FEATURES + SEKUNDÄR REGIM
+# ============================================================
+
+def build_enriched_features(base_features: Dict, enrichment: Dict) -> Dict:
+    """
+    Lägg till enrichment-features till befintliga 15 base features.
+    Returnerar dict med 31 features (15 base + 16 enrichment).
+    """
+    enriched = dict(base_features)  # Copy base 15 features
+
+    for fname in ENRICHMENT_FEATURE_NAMES:
+        enriched[fname] = enrichment.get(fname, ENRICHMENT_DEFAULTS.get(fname, 0))
+
+    return enriched
+
+
+# ============================================================
+# SEKUNDÄR REGIM: Konjunktur × Inflation (Fas 7)
+# ============================================================
+
+SECONDARY_REGIMES = {
+    # (tillväxt_signal, inflation_signal) -> sekundär regim
+    (1, -1):  "EXPANSION_DISINFLATION",     # Bästa miljön: aktier + obligationer
+    (1, 0):   "EXPANSION_STABLE",            # Bra: aktier
+    (1, 1):   "EXPANSION_RISING_INFLATION",  # OK: råvaror, energi, TIPS
+    (0, -1):  "SLOWDOWN_DISINFLATION",       # Varning: obligationer, guld, defensivt
+    (0, 0):   "SLOWDOWN_STABLE",             # Neutral: balanserat
+    (0, 1):   "STAGFLATION_RISK",            # FARLIGT: guld, råvaror, kassa
+    (-1, -1): "CONTRACTION_DISINFLATION",    # Kris: kassa, guld, kort ränta
+    (-1, 0):  "CONTRACTION_STABLE",          # Kris: defensivt
+    (-1, 1):  "STAGFLATION",                 # VÄRST: bara guld och kassa
+}
+
+REGIME_IMPLICATIONS = {
+    "EXPANSION_DISINFLATION": {
+        "description": "Bästa miljön. Aktier + obligationer stiger.",
+        "favor": ["sp500", "xlk", "tlt"],
+        "avoid": ["gold", "oil"],
+        "core_adjustment": {"equity": 1.2, "gold": 0.7, "bonds": 1.1},
+    },
+    "EXPANSION_STABLE": {
+        "description": "Bra tillväxt, stabil inflation. Aktier gynnas.",
+        "favor": ["sp500", "xlk", "eem"],
+        "avoid": [],
+        "core_adjustment": {"equity": 1.1, "gold": 0.9, "bonds": 1.0},
+    },
+    "EXPANSION_RISING_INFLATION": {
+        "description": "Tillväxt + inflation. Råvaror och energi.",
+        "favor": ["oil", "xle", "gold", "silver"],
+        "avoid": ["tlt", "xlk"],
+        "core_adjustment": {"equity": 0.9, "gold": 1.3, "bonds": 0.7},
+    },
+    "SLOWDOWN_DISINFLATION": {
+        "description": "Avmattning med fallande inflation. Obligationer och guld.",
+        "favor": ["tlt", "gold", "xlv"],
+        "avoid": ["xle", "eem"],
+        "core_adjustment": {"equity": 0.8, "gold": 1.2, "bonds": 1.3},
+    },
+    "SLOWDOWN_STABLE": {
+        "description": "Avmattning, stabil inflation. Neutral miljö.",
+        "favor": ["tlt", "xlv"],
+        "avoid": ["xle"],
+        "core_adjustment": {"equity": 0.9, "gold": 1.1, "bonds": 1.1},
+    },
+    "STAGFLATION_RISK": {
+        "description": "FARLIGT. Svag tillväxt + stigande inflation. Bara guld och kassa.",
+        "favor": ["gold", "kassa"],
+        "avoid": ["sp500", "tlt", "xlk", "eem"],
+        "core_adjustment": {"equity": 0.5, "gold": 1.5, "bonds": 0.6},
+    },
+    "STAGFLATION": {
+        "description": "VÄRST. Kontraktion + inflation. Maximera kassa.",
+        "favor": ["gold", "kassa"],
+        "avoid": ["sp500", "tlt", "xlk", "xle", "eem"],
+        "core_adjustment": {"equity": 0.3, "gold": 1.5, "bonds": 0.4},
+    },
+    "CONTRACTION_DISINFLATION": {
+        "description": "Kris med deflationsrisk. Kassa, guld, kort ränta.",
+        "favor": ["gold", "kassa", "tlt"],
+        "avoid": ["sp500", "xle", "eem", "btc"],
+        "core_adjustment": {"equity": 0.4, "gold": 1.4, "bonds": 1.2},
+    },
+    "CONTRACTION_STABLE": {
+        "description": "Kontraktion med stabil inflation. Defensivt.",
+        "favor": ["gold", "kassa", "xlv"],
+        "avoid": ["sp500", "xle", "eem"],
+        "core_adjustment": {"equity": 0.5, "gold": 1.3, "bonds": 1.0},
+    },
+}
+
+
+def detect_secondary_regime(enrichment: Dict) -> Dict:
+    """
+    Bestäm sekundär regim baserat på tillväxt + inflation-signaler.
+
+    Tillväxt-signal: koppar + bredd + momentum
+    Inflation-signal: breakeven + commodities
+
+    Returns dict with:
+      secondary_regime, growth_signal, inflation_signal,
+      description, favor, avoid, core_adjustment
+    """
+    # Tillväxt-signal: koppar + bredd + momentum
+    copper = enrichment.get("copper_roc_20d", 0)
+    breadth = enrichment.get("breadth_ratio_change_20d", 0)
+    mom = enrichment.get("mom_12m1m_spy", 0)
+
+    growth_score = 0
+    if copper > 3: growth_score += 1
+    if copper < -3: growth_score -= 1
+    if breadth > 1: growth_score += 1
+    if breadth < -1: growth_score -= 1
+    if mom > 5: growth_score += 1
+    if mom < -5: growth_score -= 1
+
+    growth_signal = 1 if growth_score >= 2 else -1 if growth_score <= -2 else 0
+
+    # Inflation-signal: breakeven + commodities
+    breakeven = enrichment.get("breakeven_inflation_proxy", 0)
+    commodities = enrichment.get("commodity_index_roc_20d", 0)
+
+    inflation_score = 0
+    if breakeven > 2: inflation_score += 1
+    if breakeven < -2: inflation_score -= 1
+    if commodities > 5: inflation_score += 1
+    if commodities < -5: inflation_score -= 1
+
+    inflation_signal = 1 if inflation_score >= 1 else -1 if inflation_score <= -1 else 0
+
+    # Matcha till sekundär regim
+    secondary = SECONDARY_REGIMES.get((growth_signal, inflation_signal), "SLOWDOWN_STABLE")
+
+    implications = REGIME_IMPLICATIONS.get(secondary, {
+        "description": "Neutral miljö.",
+        "favor": [],
+        "avoid": [],
+        "core_adjustment": {"equity": 1.0, "gold": 1.0, "bonds": 1.0},
+    })
+
+    logger.info(f"  🌡 Secondary regime: {secondary} (growth={growth_signal}, inflation={inflation_signal})")
+
+    return {
+        "secondary_regime": secondary,
+        "growth_signal": growth_signal,
+        "inflation_signal": inflation_signal,
+        "growth_score": growth_score,
+        "inflation_score": inflation_score,
+        "description": implications["description"],
+        "favor": implications.get("favor", []),
+        "avoid": implications.get("avoid", []),
+        "core_adjustment": implications.get("core_adjustment", {}),
+    }
+
+
+# ============================================================
+# DEL F: INTEGRATION MED BEFINTLIG REGIMDETEKTERING
 # ============================================================
 
 def detect_regime_ml(features_dict: Dict) -> Dict:
@@ -575,11 +770,16 @@ def compute_live_features() -> Optional[Dict]:
         return None
 
 
-def detect_regime_with_fallback() -> Dict:
+def detect_regime_with_fallback(enrichment_features: Dict = None) -> Dict:
     """
-    Primär: ML-modell
+    Primär: ML-modell (med optional enrichment features)
     Fallback: Regelbaserad regime_detector
-    
+
+    Args:
+        enrichment_features: Optional dict from DataEnrichmentLoader.get_features().
+                             If provided, enriched features are logged alongside
+                             base ML prediction for future model upgrade.
+
     Returnerar alltid ett giltigt resultat.
     """
     # Försök ML först
@@ -589,6 +789,17 @@ def detect_regime_with_fallback() -> Dict:
             ml_result = detect_regime_ml(live_features)
             if ml_result and ml_result.get("confidence", 0) > 0.4:
                 logger.info(f"  🤖 ML regime: {ml_result['regime']} (conf: {ml_result['confidence']:.0%})")
+
+                # Fas 7: Log enrichment features alongside ML prediction
+                # (Not used in prediction yet — requires retraining with backfilled data)
+                if enrichment_features:
+                    enriched = build_enriched_features(live_features, enrichment_features)
+                    ml_result["enrichment_available"] = True
+                    ml_result["enrichment_feature_count"] = len(enrichment_features)
+                    logger.info(f"  🔬 Enrichment: {len(enrichment_features)} features attached (31 total)")
+                else:
+                    ml_result["enrichment_available"] = False
+
                 return ml_result
             elif ml_result:
                 logger.info(f"  🤖 ML regime low confidence ({ml_result['confidence']:.0%}), using fallback")
@@ -600,6 +811,7 @@ def detect_regime_with_fallback() -> Dict:
         from regime_detector import regime_detector
         rule_result = regime_detector.detect_regime()
         rule_result["method"] = "rule-based"
+        rule_result["enrichment_available"] = enrichment_features is not None
         logger.info(f"  📏 Rule-based regime: {rule_result.get('regime', '?')}")
         return rule_result
     except Exception as e:
@@ -608,6 +820,7 @@ def detect_regime_with_fallback() -> Dict:
             "regime": "neutral",
             "confidence": 0.1,
             "method": "default-fallback",
+            "enrichment_available": False,
             "error": str(e),
         }
 

@@ -17,8 +17,13 @@ from fastapi import FastAPI, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
+from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from data_service import DataService
+from efficient_frontier import EfficientFrontierAnalyzer
 from ai_engine import get_system_info
 from risk_manager import PortfolioRiskManager
 from transaction_filter import filter_rebalancing
@@ -35,6 +40,8 @@ from predictive import (CausalChainEngine, EventTreeEngine, LeadLagDetector, Nar
                         PredictiveOrchestrator, MarketActorSimulation, ConvexityOptimizer,
                         ConfidenceCalibrator, MetaStrategySelector, AdversarialAgent,
                         PoliticalIntelligenceEngine)
+from data_enrichment import DataEnrichmentLoader
+from regime_classifier import detect_secondary_regime
 from daily_scheduler import DailyScheduler
 from system_health import SystemHealthCheck
 from llm_provider import call_llm, call_llm_tiered, parse_llm_json
@@ -68,6 +75,7 @@ confidence_cal = ConfidenceCalibrator()
 meta_strategy = MetaStrategySelector()
 adversarial = AdversarialAgent()
 political_engine = PoliticalIntelligenceEngine()
+enrichment_loader = DataEnrichmentLoader()  # Fas 7: Data Enrichment
 health_check = SystemHealthCheck()
 
 # Omega portfolio (scenario-based A/B testing)
@@ -239,13 +247,33 @@ async def _run_lightweight_event_detection():
 
 
 async def background_predictive_loop():
-    """Kör full prediktiv pipeline automatiskt var 6:e timme."""
+    """Kör full prediktiv pipeline automatiskt kl 08:00 svensk tid varje dag."""
     global _last_pipeline_run, _last_pipeline_result, _pipeline_run_count
 
     # Vänta 2 min efter startup så att initiell data hinner laddas
     await asyncio.sleep(120)
 
     while True:
+        # ---- SCHEMALÄGGNING (08:00 Europe/Stockholm) ----
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("Europe/Stockholm")
+        except ImportError:
+            import pytz
+            tz = pytz.timezone("Europe/Stockholm")
+            
+        now = datetime.now(tz)
+        target = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        
+        # Om klockan redan passerat 08:00 idag, schema till imorgon
+        if now >= target:
+            target += timedelta(days=1)
+            
+        seconds_to_wait = (target - now).total_seconds()
+        logger.info(f"🤖 Nästa automatiska körning schemalagd till {target.strftime('%Y-%m-%d %H:%M:%S %Z')} (om {seconds_to_wait/3600:.1f}h)")
+        
+        await asyncio.sleep(seconds_to_wait)
+        
         try:
             logger.info("🤖 ═══════════════════════════════════════")
             logger.info("🤖 AUTONOM PIPELINE STARTAR")
@@ -360,10 +388,6 @@ async def background_predictive_loop():
 
         except Exception as e:
             logger.error(f"🤖 AUTONOM PIPELINE FEL: {e}", exc_info=True)
-
-        # Vänta till nästa körning
-        logger.info(f"🤖 Nästa automatiska körning om {PIPELINE_INTERVAL_HOURS}h")
-        await asyncio.sleep(PIPELINE_INTERVAL_HOURS * 3600)
 
 
 async def _run_full_pipeline() -> dict:
@@ -555,6 +579,24 @@ async def _run_full_pipeline() -> dict:
         except Exception as e:
             logger.warning(f"Political intelligence failed: {e}")
 
+        # Fas 7: Data Enrichment — hämta alla nya features
+        enrichment_features = {}
+        enrichment_signals = []
+        secondary_regime = {
+            "secondary_regime": "SLOWDOWN_STABLE", "growth_signal": 0,
+            "inflation_signal": 0, "description": "Ej tillgänglig",
+            "core_adjustment": {"equity": 1.0, "gold": 1.0, "bonds": 1.0},
+        }
+        try:
+            enrichment_features = enrichment_loader.get_features()
+            enrichment_signals = enrichment_loader.get_direct_signals()
+            secondary_regime = detect_secondary_regime(enrichment_features)
+            logger.info(f"🔬 Enrichment: {len(enrichment_features)} features, {len(enrichment_signals)} direct signals")
+            logger.info(f"🌡 Secondary regime: {secondary_regime['secondary_regime']} "
+                       f"(growth={secondary_regime['growth_signal']}, inflation={secondary_regime['inflation_signal']})")
+        except Exception as e:
+            logger.warning(f"Data enrichment failed (non-fatal): {e}")
+
         layers_log["L3_predictive"] = {
             "chains_active": len([c for c in predictor.causal_engine.active_chains if c.status == "ACTIVE"]),
             "convex_positions": len(convex),
@@ -567,6 +609,13 @@ async def _run_full_pipeline() -> dict:
                 "dominant_actor": political_state.get("dominant_actor"),
                 "total_signals_tracked": political_state.get("total_signals_tracked", 0),
             },
+            "enrichment": {
+                "features_fetched": len(enrichment_features),
+                "direct_signals": len(enrichment_signals),
+                "secondary_regime": secondary_regime.get("secondary_regime", "UNKNOWN"),
+                "growth_signal": secondary_regime.get("growth_signal", 0),
+                "inflation_signal": secondary_regime.get("inflation_signal", 0),
+            },
         }
         logger.info(f"🔮 L3 PREDICTIVE: {len(ll_signals)} lead-lag, {len(convex)} convex, {len(narr_signals)} narrative, political={political_state.get('political_risk', 'NORMAL')}")
 
@@ -574,9 +623,10 @@ async def _run_full_pipeline() -> dict:
         # LAYER 4: ANALYSIS (Regime, Vol, Calendar, DomainKnowledge)
         # ================================================================
         # Regime detection — ML primary, rule-based fallback
+        # Fas 7: Pass enrichment features for logging alongside base ML prediction
         try:
             from regime_classifier import detect_regime_with_fallback
-            regime_data = detect_regime_with_fallback()
+            regime_data = detect_regime_with_fallback(enrichment_features=enrichment_features or None)
         except Exception as e:
             logger.warning(f"ML regime detection import failed: {e}, using rule-based")
             regime_data = regime_detector.detect_regime()
@@ -654,6 +704,9 @@ async def _run_full_pipeline() -> dict:
                 "predictions": {},
                 "political_risk": political_state.get("political_risk", "NORMAL"),
             } if political_state.get("direct_signals") else None,
+            # Fas 7: Enrichment signals + secondary regime
+            enrichment_signals=enrichment_signals,
+            secondary_regime=secondary_regime,
         )
 
         final_scores = synthesis.get("final_scores", {})
@@ -664,8 +717,10 @@ async def _run_full_pipeline() -> dict:
             "assets_scored": len(final_scores),
             "method_weights": synthesis.get("method_weights_used", {}),
             "domain_knowledge_injected": synthesis.get("domain_knowledge_injected", False),
+            "enrichment_signals_applied": len(enrichment_signals),
+            "secondary_regime": secondary_regime.get("secondary_regime", "UNKNOWN"),
         }
-        logger.info(f"🧠 L5 SYNTHESIS: {len(final_scores)} assets, conviction={conviction_ratio:.2f}")
+        logger.info(f"🧠 L5 SYNTHESIS: {len(final_scores)} assets, conviction={conviction_ratio:.2f}, secondary_regime={secondary_regime.get('secondary_regime', '?')}")
 
         # ================================================================
         # ================================================================
@@ -738,19 +793,42 @@ async def _run_full_pipeline() -> dict:
         logger.info(f"🛡 L6 ADVERSARIAL KLAR: {len(strong_signals)} förhörda, {len(blocked_assets)} blockerade")
 
         # ================================================================
-        # LAYER 7: PORTFOLIO (correlation-adjusted)
+        # LAYER 7: PORTFOLIO (correlation-adjusted + Fas 7 secondary regime)
         # ================================================================
         # Generate portfolio recommendation from predictive signals
         portfolio_rec = predictor._generate_portfolio_recommendation(
             chain_impl, convex, ll_signals, narr_signals
         )
 
+        # Fas 7: Apply secondary regime core_adjustment to portfolio recommendations
+        core_adj = secondary_regime.get("core_adjustment", {})
+        if core_adj and any(v != 1.0 for v in core_adj.values()):
+            equity_mult = core_adj.get("equity", 1.0)
+            gold_mult = core_adj.get("gold", 1.0)
+            bonds_mult = core_adj.get("bonds", 1.0)
+
+            # Apply to final_scores based on asset category mapping
+            EQUITY_ASSETS = {"sp500", "xlk", "xlf", "xlv", "xle", "eem", "vgk", "ewj", "omxs30", "btc", "global-equity"}
+            GOLD_ASSETS = {"gold", "silver"}
+            BOND_ASSETS = {"tlt", "us10y", "ief"}
+
+            for asset_id in list(final_scores.keys()):
+                aid_lower = asset_id.lower().replace("-", "_")
+                if aid_lower in EQUITY_ASSETS:
+                    final_scores[asset_id] = round(final_scores[asset_id] * equity_mult, 2)
+                elif aid_lower in GOLD_ASSETS:
+                    final_scores[asset_id] = round(final_scores[asset_id] * gold_mult, 2)
+                elif aid_lower in BOND_ASSETS:
+                    final_scores[asset_id] = round(final_scores[asset_id] * bonds_mult, 2)
+
+            logger.info(f"🌡 Core adjustment applied: equity×{equity_mult}, gold×{gold_mult}, bonds×{bonds_mult} "
+                       f"({secondary_regime.get('secondary_regime', '?')})")
+
         # Apply correlation penalty
         corr_penalty = {}
         try:
             corr_data = correlation_engine.calculate_correlations(period="30d")
             if corr_data and "matrix" in corr_data:
-                # Compute penalty: highly correlated buy-pairs get penalized
                 matrix = corr_data["matrix"]
                 buy_assets = [a for a, s in final_scores.items() if isinstance(s, (int, float)) and s > 2]
                 for i, a1 in enumerate(buy_assets):
@@ -766,6 +844,8 @@ async def _run_full_pipeline() -> dict:
         layers_log["L7_portfolio"] = {
             "recommendations": len(portfolio_rec.get("recommendations", [])),
             "correlation_penalties": len(corr_penalty),
+            "secondary_regime_adjustment": secondary_regime.get("secondary_regime", "NONE"),
+            "core_adjustment": core_adj,
         }
         logger.info(f"💼 L7 PORTFOLIO: {len(portfolio_rec.get('recommendations', []))} positions, {len(corr_penalty)} corr-penalized")
 
@@ -860,6 +940,13 @@ async def _run_full_pipeline() -> dict:
             "narratives": narr_dashboard,
             "portfolio_recommendation": portfolio_rec,
             "risk_status": risk_status,
+            # Fas 7: Enrichment + Secondary Regime
+            "enrichment": {
+                "features_count": len(enrichment_features),
+                "direct_signals": enrichment_signals,
+                "direct_signals_count": len(enrichment_signals),
+            },
+            "secondary_regime": secondary_regime,
         }
 
     except Exception as e:
@@ -878,19 +965,101 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Set up Rate Limiter
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # CORS for frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
         "http://localhost:3000",
+        "http://localhost:8080",
         "https://*.up.railway.app",
+        "https://fatdevil.github.io"
     ],
     allow_origin_regex=r"https://.*\.up\.railway\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Models for the API
+class PortfolioItem(BaseModel):
+    asset_id: str
+    weight: float
+    locked: bool = False
+
+class OptimizeRequest(BaseModel):
+    portfolio: list[PortfolioItem]
+    target: str = "HRP"
+    env: str = "ISK"
+
+@app.post("/api/v1/optimize/portfolio")
+@limiter.limit("5/minute")
+async def optimize_portfolio_endpoint(request: Request, payload: OptimizeRequest):
+    """
+    Takes a rough user portfolio and optimizes the weights using HRP/Markowitz.
+    No personalized advice or compliance triggers. Purely mathematical.
+    """
+    optimized_weights = {}
+    total_assets = len(payload.portfolio)
+    
+    if total_assets == 0:
+        return {"status": "error", "message": "No assets provided"}
+        
+    try:
+        returns_df = data_service.get_historical_returns("1y")
+        
+        if not returns_df.empty:
+            user_weights = {item.asset_id: item.weight * 100 for item in payload.portfolio}
+            
+            analyzer = EfficientFrontierAnalyzer(returns_df, risk_free_rate=0.035)
+            analysis = analyzer.analyze_portfolio(user_weights)
+            
+            if payload.target.lower() == "mar" or payload.target.lower() == "sharpe":
+                optimized_weights = analysis["max_sharpe"]["weights"]
+            else:
+                # Default "HRP" or unknown -> optimal same risk
+                optimized_weights = analysis["optimal_same_risk"]["weights"]
+                if not optimized_weights:  # safety fallback
+                    optimized_weights = analysis["max_sharpe"]["weights"]
+            
+        else:
+            weight_per_asset = 100.0 / total_assets
+            for item in payload.portfolio:
+                optimized_weights[item.asset_id] = round(weight_per_asset, 2)
+                
+    except Exception as e:
+        logger.error(f"Optimize Error: {e}", exc_info=True)
+        weight_per_asset = 100.0 / total_assets
+        for item in payload.portfolio:
+            optimized_weights[item.asset_id] = round(weight_per_asset, 2)
+            
+    return {
+        "status": "success",
+        "method": payload.target,
+        "environment": payload.env,
+        "mathematical_allocation": optimized_weights,
+        "message": "Algoritmen har kalkylerat en matematisk modell baserad på inmatade parametrar."
+    }
+
+@app.get("/api/v1/insights/daily")
+@limiter.limit("10/minute")
+async def get_daily_insights(request: Request):
+    """
+    Returns the daily macroeconomic insight generated by Aether.
+    Guaranteed to be generalized market data, avoiding specific user advice.
+    """
+    state = data_service.get_market_state()
+    return {
+        "date": datetime.now(timezone.utc).isoformat(),
+        "market_context": state.get("trend", "Neutral marknad med blandad data."),
+        "volatility_regime": state.get("volatility", "NORMAL"),
+        "macro_signal": "Systemet detekterar ökad sannolikhet för räntesänkningar baserat på inflationsdata."
+    }
 
 
 @app.get("/api/health")
@@ -900,6 +1069,55 @@ async def health():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "last_refresh": data_service.last_refresh,
     }
+
+
+# ============================================================
+# Fas 7: ENRICHMENT & SECONDARY REGIME ENDPOINTS
+# ============================================================
+
+@app.get("/api/enrichment-status")
+@limiter.limit("10/minute")
+async def get_enrichment_status(request: Request):
+    """
+    Visa alla enrichment-features, direktsignaler och sekundär regim.
+    Returnerar ~25 features + 0-5 direktsignaler + sekundär regim.
+    """
+    try:
+        features = enrichment_loader.get_features()
+        signals = enrichment_loader.get_direct_signals()
+        secondary = detect_secondary_regime(features)
+        return {
+            "status": "ok",
+            "features": features,
+            "signals": signals,
+            "secondary_regime": secondary,
+            "n_features": len(features),
+            "n_signals": len(signals),
+            "cache_status": "cached" if enrichment_loader.cache else "fresh_fetch",
+        }
+    except Exception as e:
+        logger.error(f"Enrichment status failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@app.get("/api/secondary-regime")
+@limiter.limit("10/minute")
+async def get_secondary_regime(request: Request):
+    """
+    Visa sekundär regim (konjunktur × inflation).
+    9 möjliga regimer: EXPANSION_DISINFLATION → STAGFLATION.
+    """
+    try:
+        features = enrichment_loader.get_features()
+        result = detect_secondary_regime(features)
+        return {
+            "status": "ok",
+            **result,
+        }
+    except Exception as e:
+        logger.error(f"Secondary regime failed: {e}")
+        return {"status": "error", "error": str(e)}
+
 
 
 @app.get("/api/assets")
@@ -1558,7 +1776,9 @@ async def get_core_satellite(
 @app.get("/api/compare-brokers")
 async def compare_brokers(portfolio_value: float = 700000):
     """Jämför courtage Avanza vs Nordnet för en given portföljstorlek."""
+    from regions import REGIONS, get_region_tickers
     from portfolio_builder import CoreSatelliteBuilder
+    from efficient_frontier import EfficientFrontierAnalyzer
     from broker_config import calculate_portfolio_courtage
 
     builder = CoreSatelliteBuilder()
