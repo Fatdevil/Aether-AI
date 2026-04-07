@@ -488,6 +488,10 @@ class DataEnrichmentLoader:
     # DIREKTSIGNALER (skickas till Supervisor, ej till klassificeraren)
     # ================================================================
 
+    # Kalibrering: max kassapåverkan från direktsignaler
+    MAX_DIRECT_SIGNAL_CASH_PCT = 20   # Max 20% extra kassa från signaler
+    MAX_TOTAL_CASH_PCT = 50           # Absolut tak: aldrig mer än 50% kassa
+
     def get_direct_signals(self) -> List[Dict]:
         """
         Signaler som är så starka att de ska påverka Supervisor
@@ -495,10 +499,12 @@ class DataEnrichmentLoader:
 
         5 signaler:
         1. Breadth divergens (HIGH)
-        2. VIX backwardation (CRITICAL)
+        2. VIX backwardation — TRE NIVÅER (ELEVATED/HIGH/CRITICAL)
         3. COT extremer (MEDIUM)
         4. Korrelations-spike (HIGH)
         5. Options kontrarian (MEDIUM)
+
+        Kassapåverkan cappas: max 20% från signaler, absolut tak 50%.
         """
         features = self.cache or self.get_features()
         signals = []
@@ -515,17 +521,35 @@ class DataEnrichmentLoader:
                 "affected_assets": ["sp500", "xlk", "xlf"],
             })
 
-        # 2. VIX backwardation — KRITISK
-        if features.get("vix_in_backwardation") == 1:
+        # 2. VIX backwardation — TRE NIVÅER (kalibrerat: COVID=-12/-15, Ryssland=-8)
+        #    -0.55 = brus (INGEN signal). -1.0 = ELEVATED (logga). -2.0 = HIGH. -5.0 = CRITICAL.
+        vix_term = features.get("vix_term_structure", 0)
+        if vix_term < -5.0:
+            # CRITICAL: Extrem backwardation (COVID/svart svan-nivå)
             signals.append({
                 "source": "options_market",
-                "signal": "VIX_BACKWARDATION",
+                "signal": "VIX_BACKWARDATION_EXTREME",
                 "strength": "CRITICAL",
-                "message": "VIX i backwardation — marknaden prisar in kris som ÄNNU INTE synts i aktiepriser. Historiskt: 3-7 dagars förvarning.",
+                "message": f"VIX i extrem backwardation ({vix_term:.1f}) — COVID/svart svan-nivå. Historiskt: 3-7 dagars förvarning före kursras.",
                 "action": "OKA_KASSA_15PCT_OMEDELBART",
                 "cash_impact_pct": 15,
                 "affected_assets": ["sp500", "xlk", "eem", "omxs30"],
             })
+        elif vix_term < -2.0:
+            # HIGH: Signifikant backwardation (verklig stress)
+            signals.append({
+                "source": "options_market",
+                "signal": "VIX_BACKWARDATION_HIGH",
+                "strength": "HIGH",
+                "message": f"VIX i backwardation ({vix_term:.1f}) — marknaden prisar in stress. Var observant.",
+                "action": "OKA_KASSA_5PCT",
+                "cash_impact_pct": 5,
+                "affected_assets": ["sp500", "xlk", "eem", "omxs30"],
+            })
+        elif vix_term < -1.0:
+            # ELEVATED: Noterat men ingen åtgärd — logga för medvetenhet
+            logger.info(f"  📋 VIX backwardation ELEVATED ({vix_term:.1f}) — loggar utan åtgärd")
+            # Ingen signal skickas — bara loggning
 
         # 3. COT extremer
         gold_signal = features.get("gold_positioning_signal", 0)
@@ -584,5 +608,23 @@ class DataEnrichmentLoader:
                 "affected_assets": ["sp500", "xlk", "eem"],
             })
 
-        logger.info(f"🚨 Direct signals: {len(signals)} active")
+        # ============================================================
+        # KASSATAK: max 20% från direktsignaler, absolut tak 50%
+        # Formel: total_cash = regime_cash + min(signal_cash, 20)
+        #         total_cash = min(total_cash, 50)
+        # ============================================================
+        total_signal_cash = sum(s.get("cash_impact_pct", 0) for s in signals)
+        if total_signal_cash > self.MAX_DIRECT_SIGNAL_CASH_PCT:
+            logger.warning(
+                f"  ⚠️ Signal cash impact {total_signal_cash}% exceeds cap {self.MAX_DIRECT_SIGNAL_CASH_PCT}%. "
+                f"Capping at {self.MAX_DIRECT_SIGNAL_CASH_PCT}%."
+            )
+            # Scale down proportionally so total = MAX_DIRECT_SIGNAL_CASH_PCT
+            scale = self.MAX_DIRECT_SIGNAL_CASH_PCT / total_signal_cash
+            for sig in signals:
+                if sig.get("cash_impact_pct", 0) > 0:
+                    sig["cash_impact_pct"] = round(sig["cash_impact_pct"] * scale, 1)
+                    sig["cash_impact_capped"] = True
+
+        logger.info(f"🚨 Direct signals: {len(signals)} active (cash impact: {min(total_signal_cash, self.MAX_DIRECT_SIGNAL_CASH_PCT)}%)")
         return signals

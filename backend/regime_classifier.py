@@ -607,8 +607,12 @@ def detect_secondary_regime(enrichment: Dict) -> Dict:
     if copper < -3: growth_score -= 1
     if breadth > 1: growth_score += 1
     if breadth < -1: growth_score -= 1
-    if mom > 5: growth_score += 1
-    if mom < -5: growth_score -= 1
+    # Momentum: 2× vikt vid extremt stark/svag momentum (>20% / <-20%)
+    # Kalibrering: SPY +35% 12m borde ALLTID reflekteras i growth_signal
+    if mom > 20: growth_score += 2     # Extremt stark momentum = dubbelt
+    elif mom > 5: growth_score += 1
+    if mom < -20: growth_score -= 2    # Extremt svag momentum = dubbelt
+    elif mom < -5: growth_score -= 1
 
     growth_signal = 1 if growth_score >= 2 else -1 if growth_score <= -2 else 0
 
