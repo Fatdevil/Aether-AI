@@ -1,7 +1,7 @@
 """
 Technical Indicators - Calculates real technical analysis indicators using pandas.
 Provides RSI, SMA, MACD, Bollinger Bands, ATR, volume analysis, and trend signals.
-No external TA library needed - pure pandas calculations.
+Pure pandas/numpy — no external TA library needed.
 """
 
 import logging
@@ -11,7 +11,6 @@ from typing import Optional
 
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
 import numpy as np
 
 logger = logging.getLogger("aether.indicators")
@@ -21,6 +20,57 @@ _indicator_cache: dict[str, dict] = {}
 _cache_time: float = 0
 _CACHE_TTL = 120  # 2 minutes
 
+
+# ============================================================
+# Pure pandas indicator functions (no pandas_ta dependency)
+# ============================================================
+
+def _sma(series: pd.Series, length: int) -> pd.Series:
+    """Simple Moving Average."""
+    return series.rolling(window=length, min_periods=length).mean()
+
+
+def _rsi(series: pd.Series, length: int = 14) -> pd.Series:
+    """RSI — Wilder's Smoothing."""
+    delta = series.diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = (-delta).where(delta < 0, 0.0)
+    avg_gain = gain.ewm(alpha=1/length, min_periods=length, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/length, min_periods=length, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+def _macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
+    """MACD — returns (macd_line, signal_line, histogram)."""
+    ema_fast = series.ewm(span=fast, adjust=False).mean()
+    ema_slow = series.ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    histogram = macd_line - signal_line
+    return macd_line, signal_line, histogram
+
+
+def _bbands(series: pd.Series, length: int = 20, std: float = 2.0):
+    """Bollinger Bands — returns (lower, mid, upper)."""
+    mid = series.rolling(window=length).mean()
+    rolling_std = series.rolling(window=length).std()
+    upper = mid + (rolling_std * std)
+    lower = mid - (rolling_std * std)
+    return lower, mid, upper
+
+
+def _atr(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> pd.Series:
+    """Average True Range."""
+    prev_close = close.shift(1)
+    tr1 = high - low
+    tr2 = (high - prev_close).abs()
+    tr3 = (low - prev_close).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    return tr.rolling(window=length).mean()
+
+
+# ============================================================
 
 def calculate_indicators(ticker: str, asset_id: str = "") -> dict:
     """
@@ -51,9 +101,9 @@ def calculate_indicators(ticker: str, asset_id: str = "") -> dict:
         result = {}
 
         # === MOVING AVERAGES ===
-        sma_20 = close.ta.sma(length=20)
-        sma_50 = close.ta.sma(length=50)
-        sma_200 = close.ta.sma(length=200)
+        sma_20 = _sma(close, 20)
+        sma_50 = _sma(close, 50)
+        sma_200 = _sma(close, 200)
 
         current_price = float(close.iloc[-1])
         result["price"] = current_price
@@ -76,7 +126,7 @@ def calculate_indicators(ticker: str, asset_id: str = "") -> dict:
             result["death_cross"] = result["sma_50"] < result["sma_200"]
 
         # === RSI (14-period Wilder's Smoothing) ===
-        rsi = close.ta.rsi(length=14)
+        rsi = _rsi(close, 14)
         result["rsi_14"] = round(float(rsi.iloc[-1]), 1) if rsi is not None and not pd.isna(rsi.iloc[-1]) else None
 
         rsi_label = "neutral"
@@ -92,12 +142,8 @@ def calculate_indicators(ticker: str, asset_id: str = "") -> dict:
         result["rsi_label"] = rsi_label
 
         # === MACD (12, 26, 9) ===
-        macd_df = close.ta.macd(fast=12, slow=26, signal=9)
-        if macd_df is not None and not macd_df.empty:
-            macd_line = macd_df.iloc[:, 0]     # MACD_12_26_9
-            macd_hist = macd_df.iloc[:, 1]     # MACDh_12_26_9
-            macd_signal = macd_df.iloc[:, 2]   # MACDs_12_26_9
-
+        macd_line, macd_signal, macd_hist = _macd(close, 12, 26, 9)
+        if macd_line is not None and len(macd_line.dropna()) > 0:
             result["macd"] = {
                 "line": round(float(macd_line.iloc[-1]), 2),
                 "signal": round(float(macd_signal.iloc[-1]), 2),
@@ -117,35 +163,30 @@ def calculate_indicators(ticker: str, asset_id: str = "") -> dict:
                     result["macd"]["crossover"] = "none"
 
         # === BOLLINGER BANDS (20, 2) ===
-        bb_df = close.ta.bbands(length=20, std=2)
-        if bb_df is not None and not bb_df.empty:
-            bb_lower = bb_df.iloc[:, 0]  # BBL_20_2.0
-            bb_mid = bb_df.iloc[:, 1]    # BBM_20_2.0
-            bb_upper = bb_df.iloc[:, 2]  # BBU_20_2.0
+        bb_lower, bb_mid, bb_upper = _bbands(close, 20, 2)
+        if bb_upper is not None and len(bb_upper.dropna()) > 0 and not pd.isna(bb_upper.iloc[-1]):
+            bb_u = float(bb_upper.iloc[-1])
+            bb_l = float(bb_lower.iloc[-1])
+            bb_m = float(bb_mid.iloc[-1])
+            bb_width = ((bb_u - bb_l) / bb_m) * 100
 
-            if not pd.isna(bb_upper.iloc[-1]):
-                bb_u = float(bb_upper.iloc[-1])
-                bb_l = float(bb_lower.iloc[-1])
-                bb_m = float(bb_mid.iloc[-1])
-                bb_width = ((bb_u - bb_l) / bb_m) * 100
-
-                result["bollinger"] = {
-                    "upper": round(bb_u, 2),
-                    "lower": round(bb_l, 2),
-                    "width_pct": round(bb_width, 1),
-                    "position": "upper" if current_price > bb_u else "lower" if current_price < bb_l else "middle",
-                }
+            result["bollinger"] = {
+                "upper": round(bb_u, 2),
+                "lower": round(bb_l, 2),
+                "width_pct": round(bb_width, 1),
+                "position": "upper" if current_price > bb_u else "lower" if current_price < bb_l else "middle",
+            }
 
         # === ATR (14-period True Range) ===
-        atr = daily.ta.atr(length=14)
-        if atr is not None and not pd.isna(atr.iloc[-1]):
+        atr = _atr(high, low, close, 14)
+        if atr is not None and len(atr.dropna()) > 0 and not pd.isna(atr.iloc[-1]):
             atr_val = float(atr.iloc[-1])
             result["atr_14"] = round(atr_val, 2)
-            result["atr_pct"] = round((atr_val / current_price) * 100, 2)  # ATR as % of price
+            result["atr_pct"] = round((atr_val / current_price) * 100, 2)
 
         # === VOLUME ANALYSIS ===
         if len(volume) >= 20:
-            vol_sma = volume.ta.sma(length=20)
+            vol_sma = _sma(volume, 20)
             if vol_sma is not None and not pd.isna(vol_sma.iloc[-1]):
                 vol_20_avg = float(vol_sma.iloc[-1])
                 vol_current = float(volume.iloc[-1])
@@ -193,6 +234,7 @@ def calculate_indicators(ticker: str, asset_id: str = "") -> dict:
     except Exception as e:
         logger.warning(f"  ❌ Indicator calculation failed for {ticker}: {e}")
         return {}
+
 
 
 def format_indicators_for_prompt(indicators: dict) -> str:
