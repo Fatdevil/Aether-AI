@@ -142,6 +142,16 @@ class NewsSentinel:
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                                 "status": "pending",
                             })
+                            # Black swan (impact ≥ 9) → escalate Supervisor to Opus
+                            if alert["impact_score"] >= 9:
+                                try:
+                                    from llm_provider import escalation_guard
+                                    title_short = alert.get("title", "")[:60]
+                                    escalation_guard.should_escalate_to_opus(
+                                        f"black_swan: {title_short}"
+                                    )
+                                except Exception:
+                                    pass
 
             except Exception as e:
                 logger.warning(f"Sentinel error on '{item.get('title', '')[:50]}': {e}")

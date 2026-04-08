@@ -55,6 +55,10 @@ export interface Asset {
     base: number;
     bear: number;
   };
+  // Metadata: when and by which model
+  analyzedAt?: string;          // ISO timestamp from backend
+  providerUsed?: string;        // Supervisor model (e.g. openrouter/anthropic/claude-opus-4.6)
+  providersUsed?: string[];     // All models used across agents
   // Level 1+ scenario enrichment
   scenarioNarratives?: ScenarioNarratives;
   scenarioDrivers?: ScenarioDrivers;

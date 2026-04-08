@@ -5,6 +5,7 @@ Uses LLM agents when API keys are available, falls back to rule-based otherwise.
 
 import logging
 import asyncio
+from datetime import datetime, timezone
 from typing import Optional
 
 from agents.macro_agent import MacroAgent
@@ -502,9 +503,11 @@ async def analyze_asset(asset_id: str, price_data: dict, news_items: list, categ
         "recommendation": merged.get("recommendation", supervisor_result.get("recommendation", "Neutral")),
         "scenarioData": scenarios["data"],
         "scenarioProbabilities": scenarios["probabilities"],
+        "providerUsed": supervisor_result.get("provider_used", "rule_based"),
         "providersUsed": list(set(
             r.get("provider_used", "rule_based") for r in agent_results.values()
         )) + [supervisor_result.get("provider_used", "rule_based")],
+        "analyzedAt": datetime.now(timezone.utc).isoformat(),
         "ensemble": merged.get("ensemble", {"active": False, "reason": trigger_reason}),
         "adversarial": adversarial_data,
     }

@@ -248,12 +248,13 @@ class DailyBriefEngine:
 
         prompt = prompt_template.format(context=context)
 
-        # Call Opus (Tier 3)
+        # Call LLM: Morning = Opus (deepest analysis), Evening = Sonnet (cost-effective)
         try:
             from llm_provider import call_llm_tiered, parse_llm_json
 
+            tier = "3-opus" if brief_type == "morning" else 3
             response, provider = await call_llm_tiered(
-                3,  # Tier 3 = Opus
+                tier,
                 "Du ar CIO pa en svensk hedgefond. Alla svar PA SVENSKA. Svara ENBART med JSON.",
                 prompt,
                 temperature=0.3,

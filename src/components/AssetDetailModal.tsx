@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { X, TrendingUp, TrendingDown, Brain, BarChart3, Newspaper, Cpu, Shield, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, TrendingUp, TrendingDown, Brain, BarChart3, Newspaper, Cpu, Shield, ChevronDown, ChevronUp, Clock } from 'lucide-react';
 import type { Asset } from '../types';
 import { getRecommendation } from '../types';
 import PriceChart from './PriceChart';
 import ScenarioChart from './ScenarioChart';
+import { timeAgo, formatProvider, formatTime } from '../utils/timeAgo';
 
 
 interface Props {
@@ -128,9 +129,30 @@ export default function AssetDetailModal({ asset, price, onClose }: Props) {
           {/* Supervisor Motivering */}
           {asset.supervisorText && (
             <section style={{ marginBottom: '1.5rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                <Shield size={16} color="#667eea" />
-                <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700 }}>Supervisor — AI Motivering</h3>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Shield size={16} color="#667eea" />
+                  <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700 }}>Supervisor — AI Motivering</h3>
+                </div>
+                {/* Metadata badge */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>
+                  {asset.analyzedAt && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                      <Clock size={10} style={{ opacity: 0.5 }} />
+                      {formatTime(asset.analyzedAt)}
+                    </span>
+                  )}
+                  {asset.providerUsed && (
+                    <span style={{
+                      padding: '0.1rem 0.4rem', borderRadius: '4px',
+                      background: 'rgba(102, 126, 234, 0.12)',
+                      color: 'rgba(102, 126, 234, 0.8)',
+                      fontWeight: 600,
+                    }}>
+                      {formatProvider(asset.providerUsed)}
+                    </span>
+                  )}
+                </div>
               </div>
               <div style={{
                 padding: '1rem', borderRadius: '10px',
@@ -237,7 +259,13 @@ export default function AssetDetailModal({ asset, price, onClose }: Props) {
                           display: 'flex', gap: '1rem', marginTop: '0.75rem', fontSize: '0.7rem', color: 'var(--text-tertiary)',
                         }}>
                           <span>Konfidens: {(detail.confidence * 100).toFixed(0)}%</span>
-                          <span>LLM: {detail.provider}</span>
+                          <span style={{
+                            padding: '0.05rem 0.35rem', borderRadius: '3px',
+                            background: `${config.color}15`,
+                            color: config.color,
+                          }}>
+                            {formatProvider(detail.provider)}
+                          </span>
                         </div>
                       </div>
                     )}

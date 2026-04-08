@@ -6,7 +6,7 @@ Primary provider: OpenAI GPT-4o (or best available)
 import os
 import logging
 from .base_agent import BaseAgent
-from llm_provider import call_llm, call_llm_tiered, parse_llm_json, get_available_providers
+from llm_provider import call_llm, call_llm_tiered, parse_llm_json, get_available_providers, escalation_guard
 
 logger = logging.getLogger("aether.agents.supervisor")
 
@@ -59,14 +59,16 @@ class SupervisorAgent(BaseAgent):
     perspective = "Övergripande"
 
     def __init__(self):
-        # Supervisor per-asset eval: Tier 2 (Haiku) — cheap but capable
-        # Global daily brief uses Tier 3 (Opus) separately in daily_brief.py
+        # Supervisor uses hybrid tier routing:
+        #   Morning 07-09 CET: Opus ("3-opus") for deepest analysis
+        #   Rest of day: Sonnet (tier 3) for cost-effective updates
+        #   Regime shift / Black swan: Escalates to Opus (max 1x/day)
         available = get_available_providers()
         if not available:
             self.provider = "rule_based"
         else:
-            self.provider = available[0]  # gemini or anthropic
-        self.use_tiered = True   # Use call_llm_tiered(tier=3) for evaluate()
+            self.provider = available[0]
+        self.use_tiered = True
         self.tango_filter = TangoConsensusFilter()
         self.meta_weights = {}
 
@@ -440,13 +442,28 @@ Utvärdera dessa bedömningar med hänsyn till regim, händelser och historik.
 Skriv supervisor_text för VANLIGA MÄNNISKOR — enkel, tydlig svenska.
 Ge ditt slutvärde som JSON."""
 
+        # Smart tier selection:
+        #   1. Morning window (07-09 CET) → always Opus
+        #   2. Escalation active (regime shift / black swan approved) → Opus (one-shot)
+        #   3. Otherwise → Sonnet (cost-effective)
+        if escalation_guard.is_morning_opus_window():
+            tier = "3-opus"
+        elif escalation_guard.is_escalation_active():
+            tier = "3-opus"
+        else:
+            tier = 3  # Sonnet (standard)
+
         response, provider_used = await call_llm_tiered(
-            tier=3,  # Opus — flagship model for ultimate reasoning
+            tier=tier,
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,
             temperature=0.2,
             max_tokens=600,
         )
+
+        # Consume the escalation after use (so it doesn't persist)
+        if tier == "3-opus" and not escalation_guard.is_morning_opus_window():
+            escalation_guard.consume_escalation()
         result = parse_llm_json(response)
 
         if result and "final_score" in result:

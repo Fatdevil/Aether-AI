@@ -171,6 +171,12 @@ class DataService:
         try:
             from regime_detector import regime_detector as _rd
             _regime_now = _rd.detect_regime().get("regime", "neutral")
+            # Check for regime shift → escalate to Opus if shift detected
+            from llm_provider import escalation_guard
+            if escalation_guard.check_regime_shift(_regime_now):
+                if escalation_guard.should_escalate_to_opus(f"regime_shift→{_regime_now}"):
+                    scheduler.force_refresh("supervisor")
+                    logger.info(f"🧠 Regimskifte → Supervisor eskalerats till Opus")
         except Exception:
             _regime_now = "neutral"
         # Top news headlines for scenario context

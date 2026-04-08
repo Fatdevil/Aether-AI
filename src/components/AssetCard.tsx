@@ -1,6 +1,7 @@
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, Clock } from 'lucide-react';
 import type { Asset } from '../types';
 import { getScoreColor } from '../types';
+import { timeAgo, formatProvider } from '../utils/timeAgo';
 
 interface AssetCardProps {
   asset: Asset;
@@ -75,6 +76,30 @@ export default function AssetCard({ asset, price, isSelected, onClick }: AssetCa
         <span>Sent: {asset.scores.sentiment}</span>
         <span>Tekn: {asset.scores.tech}</span>
       </div>
+
+      {/* Metadata: timestamp + model */}
+      {(asset.analyzedAt || asset.providerUsed) && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.4rem',
+          marginTop: '0.5rem', paddingTop: '0.5rem',
+          borderTop: '1px solid rgba(255,255,255,0.04)',
+          fontSize: '0.68rem', color: 'var(--text-tertiary)',
+        }}>
+          <Clock size={11} style={{ opacity: 0.5 }} />
+          {asset.analyzedAt && <span>{timeAgo(asset.analyzedAt)}</span>}
+          {asset.analyzedAt && asset.providerUsed && <span>·</span>}
+          {asset.providerUsed && (
+            <span style={{
+              padding: '0.05rem 0.35rem', borderRadius: '3px',
+              background: 'rgba(102, 126, 234, 0.1)',
+              color: 'rgba(102, 126, 234, 0.7)',
+              fontSize: '0.65rem',
+            }}>
+              {formatProvider(asset.providerUsed)}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

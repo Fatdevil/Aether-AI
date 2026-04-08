@@ -44,7 +44,7 @@ from data_enrichment import DataEnrichmentLoader
 from regime_classifier import detect_secondary_regime
 from daily_scheduler import DailyScheduler
 from system_health import SystemHealthCheck
-from llm_provider import call_llm, call_llm_tiered, parse_llm_json
+from llm_provider import call_llm, call_llm_tiered, parse_llm_json, escalation_guard
 from analysis_store import store as analysis_store
 from daily_brief import daily_brief_engine
 
@@ -3375,6 +3375,21 @@ ANVÄNDARENS FRÅGA: {user_message}"""
     except Exception as e:
         logger.error(f"Chat error: {e}")
         return {"response": f"Ett fel uppstod: {str(e)}", "provider": "error"}
+
+
+# ============================================================
+# LLM TIER STATUS API
+# ============================================================
+@app.get("/api/tier-status")
+async def get_tier_status():
+    """Return current LLM tier configuration, escalation status, and daily budget."""
+    from llm_provider import TIER_MODELS, get_available_providers, escalation_guard, get_daily_cost_status
+    return {
+        "tier_models": {str(k): v for k, v in TIER_MODELS.items()},
+        "providers": get_available_providers(),
+        "escalation": escalation_guard.get_status(),
+        "daily_budget": get_daily_cost_status(),
+    }
 
 
 # ============================================================

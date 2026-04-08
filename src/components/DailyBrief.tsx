@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { formatProvider } from '../utils/timeAgo';
 
 interface BriefContent {
   headline?: string;
@@ -129,8 +130,15 @@ export default function DailyBrief() {
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={{ fontSize: '0.6rem', color: '#4b5563' }}>
-            {brief.provider === 'anthropic' ? 'Opus 4.6' : brief.provider}
+          <span style={{
+            fontSize: '0.6rem',
+            padding: '0.1rem 0.4rem',
+            borderRadius: '4px',
+            background: 'rgba(102, 126, 234, 0.12)',
+            color: 'rgba(102, 126, 234, 0.8)',
+            fontWeight: 600,
+          }}>
+            {formatProvider(brief.provider)}
           </span>
           <span style={{ fontSize: '0.6rem', color: '#374151' }}>
             {genTime}
