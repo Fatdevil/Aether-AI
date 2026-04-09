@@ -416,8 +416,13 @@ async def call_llm_tiered(
         elif tier == 3:
             logger.warning(f"🔽 Sonnet budget nått — nedgraderar till DeepSeek")
             return await call_llm_tiered(1, system_prompt, user_prompt, temperature, max_tokens, plain_text)
+        elif tier in (1, 2):
+            logger.warning(f"🔽 DeepSeek budget nått — nedgraderar till Gemini Flash (gratis)")
+            return await call_llm_tiered(0, system_prompt, user_prompt, temperature, max_tokens, plain_text)
         else:
-            return None, "budget_exceeded"
+            # Tier 0 (Gemini) itself is over budget — truly exhausted
+            logger.error(f"🚨 ALLA TIERS UTTÖMDA — inga LLM-anrop möjliga")
+            return None, "all_tiers_exhausted"
 
     result = await call_llm(provider, system_prompt, user_prompt, temperature, max_tokens, model, plain_text)
     if result:
