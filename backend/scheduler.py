@@ -28,9 +28,9 @@ class TieredScheduler:
         }
 
         # Scheduled times (HH:MM, UTC) for time-based triggers
-        # full_analysis runs at 05:30 UTC = 07:30 CET, 12:30 UTC = 14:30 CET
+        # full_analysis runs at 05:30 UTC = 07:30 CET, 12:30 UTC = 14:30 CET, 16:00 UTC = 18:00 CET
         self.scheduled_times = {
-            "full_analysis": ["05:30", "12:30"],   # 07:30 + 14:30 CET
+            "full_analysis": ["05:30", "12:30", "16:00"],   # 07:30 + 14:30 + 18:00 CET
         }
 
         # Last refresh timestamps

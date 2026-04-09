@@ -252,7 +252,9 @@ class Level1Generator(ScenarioGenerator):
             t_vol = monthly_base_vol * (month ** 0.5)
             bull_path.append(round(p * (1 + t_vol * BULL_MULT[i] + base_drift), 4))
             base_path.append(round(p * (1 + t_vol * BASE_MULT[i] + base_drift * 0.5), 4))
-            bear_path.append(round(p * (1 + t_vol * BEAR_MULT[i]), 4))
+            # Floor: bear price can never go below 5% of current price
+            bear_raw = p * (1 + t_vol * BEAR_MULT[i])
+            bear_path.append(round(max(bear_raw, p * 0.05), 4))
 
         return {"bull": bull_path, "base": base_path, "bear": bear_path}
 

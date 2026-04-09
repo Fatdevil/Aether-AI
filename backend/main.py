@@ -1665,8 +1665,8 @@ async def get_backtest():
     return evaluator.get_performance_report()
 
 
-@app.get("/api/portfolio/history")
-async def get_portfolio_history(days: int = 7):
+@app.get("/api/portfolio/score-history")
+async def get_portfolio_score_history(days: int = 7):
     """Return portfolio score history for charting."""
     from analysis_store import store
     from datetime import datetime, timezone, timedelta

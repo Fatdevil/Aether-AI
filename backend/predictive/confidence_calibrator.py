@@ -155,7 +155,7 @@ class ConfidenceCalibrator:
         bin_key = f"{bin_idx * 10}-{(bin_idx + 1) * 10}%"
         adjustment = self.calibration_curve.get(bin_key, 1.0)
         adjusted = raw_probability * adjustment
-        return max(0.01, min(0.99, adjusted))
+        return max(0.15, min(0.99, adjusted))
 
     def per_source_calibration(self) -> Dict:
         sources = set(r.source for r in self.records)

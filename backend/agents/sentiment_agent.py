@@ -152,10 +152,38 @@ Bedöm det övergripande sentimentet kring denna tillgång och ge ditt JSON-svar
                 "provider_used": "marketaux_quantitative",
             }
 
-        # Fallback to keyword-based
-        pos = sum(1 for n in news_items if n.get("sentiment") == "positive")
-        neg = sum(1 for n in news_items if n.get("sentiment") == "negative")
-        total = len(news_items)
+        # Fallback to keyword-based — BUT filter news per asset first
+        asset_keywords = {
+            "btc": ["bitcoin", "btc", "crypto", "krypto", "halvering", "halving", "satoshi", "mining"],
+            "gold": ["gold", "guld", "xau", "precious metal", "ädelmetall", "bullion"],
+            "silver": ["silver", "xag", "precious metal", "ädelmetall"],
+            "oil": ["oil", "olja", "brent", "crude", "opec", "petroleum", "barrel", "fat"],
+            "sp500": ["s&p", "sp500", "wall street", "nasdaq", "dow jones", "aktie", "stock", "equity"],
+            "global-equity": ["global", "msci", "acwi", "emerging", "developed", "world market"],
+            "eurusd": ["euro", "eur/usd", "eurusd", "dollar", "forex", "valuta", "ecb"],
+            "us10y": ["treasury", "yield", "ränta", "bond", "obligation", "10-year", "10y", "fed fund"],
+        }
+
+        keywords = asset_keywords.get(asset_id, [asset_id])
+
+        # Filter: only count news relevant to this asset
+        relevant_news = []
+        for n in news_items:
+            text = (n.get("title", "") + " " + n.get("summary", "")).lower()
+            if any(kw in text for kw in keywords):
+                relevant_news.append(n)
+
+        # If no asset-specific news found, use all news but with lower confidence
+        if relevant_news:
+            items_to_score = relevant_news
+            base_confidence = 0.5
+        else:
+            items_to_score = news_items
+            base_confidence = 0.3  # Lower confidence for unfiltered
+
+        pos = sum(1 for n in items_to_score if n.get("sentiment") == "positive")
+        neg = sum(1 for n in items_to_score if n.get("sentiment") == "negative")
+        total = len(items_to_score)
 
         ratio = (pos - neg) / total if total > 0 else 0
         score = int(ratio * 8)
@@ -165,18 +193,19 @@ Bedöm det övergripande sentimentet kring denna tillgång och ge ditt JSON-svar
         score += bias.get(asset_id, 0)
 
         reasoning_parts = []
+        filter_note = f" (av {len(news_items)} totalt)" if len(items_to_score) != len(news_items) else ""
         if pos > neg:
-            reasoning_parts.append(f"{pos} positiva vs {neg} negativa nyheter ger positivt sentiment.")
+            reasoning_parts.append(f"{pos} positiva vs {neg} negativa av {total} relevanta nyheter{filter_note} ger positivt sentiment.")
         elif neg > pos:
-            reasoning_parts.append(f"{neg} negativa vs {pos} positiva nyheter ger negativt sentiment.")
+            reasoning_parts.append(f"{neg} negativa vs {pos} positiva av {total} relevanta nyheter{filter_note} ger negativt sentiment.")
         else:
-            reasoning_parts.append("Balanserat nyhetsflöde utan tydlig riktning.")
+            reasoning_parts.append(f"Balanserat nyhetsflöde bland {total} relevanta nyheter{filter_note}.")
 
         return {
             "score": self._clamp_score(score),
-            "confidence": min(0.8, 0.3 + total * 0.05),
+            "confidence": min(0.8, base_confidence + total * 0.05),
             "reasoning": " ".join(reasoning_parts),
-            "key_factors": [f"{pos} positiva", f"{neg} negativa", f"{total} totalt"],
+            "key_factors": [f"{pos} positiva", f"{neg} negativa", f"{total} relevanta av {len(news_items)}"],
             "provider_used": "rule_based",
         }
 

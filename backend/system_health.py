@@ -37,38 +37,37 @@ class SystemHealthCheck:
     def run_checks(self) -> Dict:
         checks = {}
 
-        # Detect if we're using PostgreSQL or local files
+        # Always try KV store first — it works on Railway even if DB_TYPE isn't "postgresql"
+        kv_available = False
         try:
-            from db import DB_TYPE, kv_get
-            use_pg = DB_TYPE == "postgresql"
-        except Exception:
-            use_pg = False
-
-        if use_pg:
-            # PostgreSQL mode: check kv_store for each key
+            from db import kv_get
+            # Test one key to see if KV store is available
             for key in KV_KEYS:
                 try:
                     data = kv_get(key)
+                    kv_available = True  # If we get here, KV works
                     if data:
                         checks[key] = {
                             "exists": True,
-                            "age_hours": 0,
-                            "size_kb": 0,
                             "stale": False,
+                            "size_kb": 0,
                             "too_large": False,
                             "source": "postgresql"
                         }
                     else:
                         checks[key] = {
                             "exists": False,
-                            "stale": False,  # Not stale, just not yet created
+                            "stale": False,
                             "size_kb": 0,
                             "too_large": False,
                             "source": "postgresql"
                         }
                 except Exception:
                     checks[key] = {"exists": False, "stale": False, "size_kb": 0, "too_large": False, "source": "postgresql"}
-        else:
+        except ImportError:
+            pass
+
+        if not kv_available:
             # Local mode: check JSON files
             critical_files = [
                 "data/causal_chains.json",
@@ -102,7 +101,7 @@ class SystemHealthCheck:
         large_count = sum(1 for c in checks.values() if c.get("too_large"))
 
         # In PostgreSQL mode, missing data is OK — pipeline just hasn't run yet
-        if use_pg:
+        if kv_available:
             if missing_count > 6:
                 status = "WARMING_UP"
                 message = f"Pipeline har inte kört ännu — {len(KV_KEYS) - missing_count}/{len(KV_KEYS)} moduler har data"
@@ -130,8 +129,8 @@ class SystemHealthCheck:
             "file_checks": checks,
             "stale_files": stale_count,
             "missing_files": missing_count,
-            "db_mode": "postgresql" if use_pg else "sqlite",
-            "recommendations": self._recommendations(checks, use_pg)
+            "db_mode": "postgresql" if kv_available else "sqlite",
+            "recommendations": self._recommendations(checks, kv_available)
         }
 
     def _recommendations(self, checks: Dict, use_pg: bool = False) -> List[str]:
