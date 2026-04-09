@@ -208,7 +208,7 @@ def kv_get(key: str) -> Optional[dict]:
 
 
 def kv_set(key: str, value) -> None:
-    """Set a JSON value in the KV store (upsert)."""
+    """Set a JSON value in the KV store (upsert). Raises on failure."""
     from datetime import datetime, timezone
     _ensure_kv_table()
     
@@ -230,8 +230,10 @@ def kv_set(key: str, value) -> None:
                 (key, val_str, now)
             )
         conn.commit()
+        logger.debug(f"KV set '{key}': OK ({len(val_str)} bytes)")
     except Exception as e:
-        logger.error(f"KV set '{key}': {e}")
+        logger.error(f"KV set '{key}' FAILED: {e}")
+        raise  # Re-raise so callers know the save failed
     finally:
         conn.close()
 

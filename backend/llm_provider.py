@@ -189,12 +189,14 @@ _tier_call_counts: dict = {}
 _tier_reset_date: Optional[str] = None
 
 # Hard caps per tier per day (safety net against loops)
+# Normal usage: 8 assets × 4 agents × 6 cycles = ~192 agent calls
+# Plus: supervisors (~48), briefs (2-4), news sentinel (~50), chat (~20)
 TIER_DAILY_CAPS = {
-    0: 500,     # Gemini Flash — free, generous cap
-    1: 300,     # DeepSeek V3 — cheap, generous cap
-    2: 300,     # DeepSeek V3 — cheap
-    3: 50,      # Sonnet 4.6 — ~$3.25 max/day
-    "3-opus": 20,  # Opus 4.6 — ~$1.40 max/day
+    0: 800,     # Gemini Flash — free, generous cap
+    1: 500,     # DeepSeek V3 — cheap ($0.00035/call)
+    2: 500,     # DeepSeek V3 — cheap
+    3: 100,     # Sonnet 4.6 — ~$6.50 max/day
+    "3-opus": 20,  # Opus 4.6 — ~$1.40 max/day (morning + escalations)
 }
 
 # Estimated cost per call (input+output combined, conservative)

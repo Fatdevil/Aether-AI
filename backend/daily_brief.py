@@ -106,32 +106,58 @@ class DailyBriefEngine:
         self._load()
 
     def _load(self):
-        """Load persisted briefs."""
+        """Load persisted briefs from PostgreSQL (primary) or JSON file (fallback)."""
         data = None
+
+        # Primary: PostgreSQL via KV store
         try:
             from db import kv_get
             data = kv_get("daily_briefs")
-        except Exception:
-            if os.path.exists(DATA_FILE):
-                try:
-                    with open(DATA_FILE, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except Exception:
-                    pass
+            if data:
+                logger.info(f"📋 Loaded {len(data.get('briefs', {}))} briefs from PostgreSQL")
+        except Exception as e:
+            logger.warning(f"⚠️ KV load failed: {e}")
+
+        # Fallback: JSON file (local dev only)
+        if not data and os.path.exists(DATA_FILE):
+            try:
+                with open(DATA_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                logger.info(f"📋 Loaded {len(data.get('briefs', {}))} briefs from JSON file (fallback)")
+            except Exception:
+                pass
 
         if data and isinstance(data, dict):
             self.briefs = data.get("briefs", {})
+        else:
+            logger.info("📋 No existing briefs found — starting fresh")
 
     def _save(self):
-        """Persist briefs."""
+        """Persist briefs to PostgreSQL (primary). File fallback for local dev."""
         data = {"briefs": self.briefs}
+        saved = False
+
+        # Primary: PostgreSQL
         try:
             from db import kv_set
             kv_set("daily_briefs", data)
-        except Exception:
+            saved = True
+            logger.info(f"💾 Briefs saved to PostgreSQL ({len(self.briefs)} entries)")
+        except Exception as e:
+            logger.error(f"🚨 PostgreSQL brief save FAILED: {e}")
+
+        # Fallback: always write file too (helps local dev, no harm in prod)
+        try:
             os.makedirs("data", exist_ok=True)
             with open(DATA_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, default=str)
+            if not saved:
+                logger.info(f"💾 Briefs saved to JSON file (PostgreSQL failed)")
+        except Exception as e:
+            logger.warning(f"File save also failed: {e}")
+
+        if not saved:
+            logger.error("🚨 BRIEF PERSISTENCE COMPLETELY FAILED — briefs will be lost on restart!")
 
     def _build_context(self, brief_type: str = "morning") -> str:
         """Gather all available context for the brief."""
