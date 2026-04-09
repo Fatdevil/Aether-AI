@@ -103,58 +103,71 @@ class NewsSentinel:
         except Exception as e:
             logger.debug(f"Political engine not available: {e}")
 
-        logger.info(f"🔍 Sentinel scanning {len(new_items)} new items...")
+        logger.info(f"🔍 Sentinel scanning {len(new_items)} new items (batch mode)...")
         new_alerts = []
 
-        for item in new_items:
+        # Batch-evaluate: up to 5 news items per LLM call (saves ~5x API calls)
+        BATCH_SIZE = 5
+        for batch_start in range(0, len(new_items), BATCH_SIZE):
+            batch = new_items[batch_start:batch_start + BATCH_SIZE]
             try:
-                alert = await self._evaluate_news(item)
-                self.stats["total_scanned"] += 1
+                batch_results = await self._evaluate_batch(batch)
+                for alert in batch_results:
+                    self.stats["total_scanned"] += 1
 
-                if alert:
-                    # Store ALL evaluations for news enrichment
-                    self.all_evaluations[alert.get("title", "")] = alert
+                    if alert:
+                        # Store ALL evaluations for news enrichment
+                        self.all_evaluations[alert.get("title", "")] = alert
 
-                    if alert["impact_score"] >= 5:
+                        if alert["impact_score"] >= 5:
+                            self.alerts.append(alert)
+                            new_alerts.append(alert)
+                            self.stats["alerts_triggered"] += 1
+
+                            # Political Intelligence v2: match against power actors
+                            if political_engine:
+                                try:
+                                    pol_signal = political_engine.process_sentinel_alert(alert)
+                                    if pol_signal:
+                                        logger.info(
+                                            f"🏛️ Political: {pol_signal['actor_name']} "
+                                            f"{pol_signal['tone']} (impact={alert['impact_score']})"
+                                        )
+                                except Exception as pe:
+                                    logger.debug(f"Political filter error: {pe}")
+
+                            if alert["impact_score"] >= 7:
+                                self.stats["critical_alerts"] += 1
+                                # Send push notification for critical alerts
+                                await self._send_alert_notification(alert)
+                                # Queue analysis trigger
+                                self.pending_triggers.append({
+                                    "alert": alert,
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    "status": "pending",
+                                })
+                                # Black swan (impact ≥ 9) → escalate Supervisor to Opus
+                                if alert["impact_score"] >= 9:
+                                    try:
+                                        from llm_provider import escalation_guard
+                                        title_short = alert.get("title", "")[:60]
+                                        escalation_guard.should_escalate_to_opus(
+                                            f"black_swan: {title_short}"
+                                        )
+                                    except Exception:
+                                        pass
+
+            except Exception as e:
+                logger.warning(f"Sentinel batch error: {e}")
+                # Fallback: evaluate items individually via rule-based
+                for item in batch:
+                    self.stats["total_scanned"] += 1
+                    alert = self._rule_based_evaluate(item)
+                    if alert and alert["impact_score"] >= 5:
+                        self.all_evaluations[alert.get("title", "")] = alert
                         self.alerts.append(alert)
                         new_alerts.append(alert)
                         self.stats["alerts_triggered"] += 1
-
-                        # Political Intelligence v2: match against power actors
-                        if political_engine:
-                            try:
-                                pol_signal = political_engine.process_sentinel_alert(alert)
-                                if pol_signal:
-                                    logger.info(
-                                        f"🏛️ Political: {pol_signal['actor_name']} "
-                                        f"{pol_signal['tone']} (impact={alert['impact_score']})"
-                                    )
-                            except Exception as pe:
-                                logger.debug(f"Political filter error: {pe}")
-
-                        if alert["impact_score"] >= 7:
-                            self.stats["critical_alerts"] += 1
-                            # Send push notification for critical alerts
-                            await self._send_alert_notification(alert)
-                            # Queue analysis trigger
-                            self.pending_triggers.append({
-                                "alert": alert,
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                                "status": "pending",
-                            })
-                            # Black swan (impact ≥ 9) → escalate Supervisor to Opus
-                            if alert["impact_score"] >= 9:
-                                try:
-                                    from llm_provider import escalation_guard
-                                    title_short = alert.get("title", "")[:60]
-                                    escalation_guard.should_escalate_to_opus(
-                                        f"black_swan: {title_short}"
-                                    )
-                                except Exception:
-                                    pass
-
-            except Exception as e:
-                logger.warning(f"Sentinel error on '{item.get('title', '')[:50]}': {e}")
 
         # Keep only last 50 alerts
         self.alerts = self.alerts[-50:]
@@ -166,6 +179,83 @@ class NewsSentinel:
             logger.info(f"✅ Sentinel: No significant alerts in {len(new_items)} items")
 
         return new_alerts
+
+    async def _evaluate_batch(self, items: list[dict]) -> list[Optional[dict]]:
+        """Evaluate up to 5 news items in a single LLM call (saves API quota)."""
+        if not items:
+            return []
+
+        # Build numbered list of news
+        news_lines = []
+        for i, item in enumerate(items, 1):
+            title = item.get("title", "")
+            source = item.get("source", "Unknown")
+            summary = item.get("summary", title)[:200]
+            news_lines.append(f"[{i}] Titel: \"{title}\" | Källa: {source} | Sammanfattning: \"{summary}\"")
+
+        batch_prompt = f"""Bedöm följande {len(items)} nyheter:
+
+{chr(10).join(news_lines)}
+
+Svara med en JSON-array med ett objekt per nyhet, i samma ordning:
+[
+  {{"index": 1, "impact_score": <1-10>, "category": "<kategori>", "urgency": "<routine|notable|urgent|critical>", "one_liner": "<en mening på svenska>", "affected_assets": [{{"id": "asset_id", "direction": "up|down|mixed", "strength": "weak|moderate|strong", "reason": "kort"}}], "affected_sectors": [], "affected_regions": []}},
+  ...
+]
+
+VIKTIGT: Svara med ENBART JSON-arrayen. En post per nyhet."""
+
+        response, provider_used = await call_llm_tiered(
+            0, SENTINEL_PROMPT, batch_prompt, temperature=0.1, max_tokens=800
+        )
+        logger.debug(f"Sentinel batch used model: {provider_used} for {len(items)} items")
+
+        # Parse batch response
+        results = []
+        if response:
+            try:
+                import json as _json
+                # Try to parse as array
+                cleaned = response.strip()
+                if cleaned.startswith("["):
+                    parsed_list = _json.loads(cleaned)
+                else:
+                    # Try extracting JSON array from response
+                    start = cleaned.find("[")
+                    end = cleaned.rfind("]") + 1
+                    if start >= 0 and end > start:
+                        parsed_list = _json.loads(cleaned[start:end])
+                    else:
+                        parsed_list = None
+
+                if parsed_list and isinstance(parsed_list, list):
+                    for i, item in enumerate(items):
+                        if i < len(parsed_list):
+                            r = parsed_list[i]
+                            impact = max(1, min(10, int(r.get("impact_score", 2))))
+                            results.append({
+                                "id": f"alert-{self.stats['total_scanned'] + i}",
+                                "title": item.get("title", ""),
+                                "source": item.get("source", "Unknown"),
+                                "time": item.get("time", ""),
+                                "impact_score": impact,
+                                "category": r.get("category", "other"),
+                                "affected_assets": r.get("affected_assets", []),
+                                "affected_sectors": r.get("affected_sectors", []),
+                                "affected_regions": r.get("affected_regions", []),
+                                "urgency": r.get("urgency", "routine"),
+                                "one_liner": r.get("one_liner", item.get("title", "")),
+                                "provider": provider_used,
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            })
+                        else:
+                            results.append(self._rule_based_evaluate(item))
+                    return results
+            except Exception as e:
+                logger.warning(f"Batch parse failed: {e}")
+
+        # Fallback: rule-based for all items in batch
+        return [self._rule_based_evaluate(item) for item in items]
 
     async def _evaluate_news(self, item: dict) -> Optional[dict]:
         """Use AI to evaluate a single news item's market impact."""

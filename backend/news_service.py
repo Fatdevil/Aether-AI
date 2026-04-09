@@ -124,7 +124,7 @@ def classify_category(text: str) -> str:
     return best_cat if scores[best_cat] > 0 else "Makro"
 
 
-def fetch_all_news(max_per_feed: int = 5) -> list:
+def fetch_all_news(max_per_feed: int = 3) -> list:
     """Fetch and parse news from RSS feeds + Marketaux API."""
     all_news = []
 

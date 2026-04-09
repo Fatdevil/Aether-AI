@@ -20,7 +20,7 @@ class TieredScheduler:
         # Intervals in minutes (fallback if no scheduled_times set)
         self.intervals = {
             "prices": 5,           # Tier 0: No LLM, just yfinance
-            "news_sentiment": 5,   # Tier 1: Gemini Flash (cheapest)
+            "news_sentiment": 30,  # Tier 1: Gemini Flash — 30 min is enough for news
             "full_analysis": 360,  # Tier 2: Safety-net 6h fallback
             "supervisor": 360,     # Tier 3: Safety-net
             "evaluation": 15,
