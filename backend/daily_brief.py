@@ -315,11 +315,14 @@ class DailyBriefEngine:
             return self._fallback_brief(brief_type)
 
     def _fallback_brief(self, brief_type: str) -> dict:
-        """Minimal fallback if Opus is unavailable."""
+        """Minimal fallback if Opus is unavailable — STILL persisted."""
         now = datetime.now(CET)
-        return {
+        date_key = now.strftime("%Y-%m-%d")
+        brief_key = f"{date_key}_{brief_type}"
+
+        brief = {
             "type": brief_type,
-            "date": now.strftime("%Y-%m-%d"),
+            "date": date_key,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "provider": "fallback",
             "content": {
@@ -328,6 +331,13 @@ class DailyBriefEngine:
                 "confidence": 0,
             },
         }
+
+        # Persist even fallback briefs so get_latest() returns today's date
+        self.briefs[brief_key] = brief
+        self._save()
+        logger.warning(f"⚠️ Fallback brief saved for {brief_key} (LLM unavailable)")
+
+        return brief
 
     def get_latest(self, brief_type: str = None) -> Optional[dict]:
         """Return the most recent brief (optionally filtered by type)."""

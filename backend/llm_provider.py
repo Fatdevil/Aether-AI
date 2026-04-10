@@ -193,10 +193,10 @@ _tier_reset_date: Optional[str] = None
 # Plus: supervisors (~48), briefs (2-4), news sentinel (~50), chat (~20)
 TIER_DAILY_CAPS = {
     0: 800,     # Gemini Flash — free, generous cap
-    1: 500,     # DeepSeek V3 — cheap ($0.00035/call)
-    2: 500,     # DeepSeek V3 — cheap
-    3: 100,     # Sonnet 4.6 — ~$6.50 max/day
-    "3-opus": 20,  # Opus 4.6 — ~$1.40 max/day (morning + escalations)
+    1: 300,     # DeepSeek V3 — cheap ($0.105 max/day)
+    2: 300,     # DeepSeek V3 — cheap
+    3: 30,      # Sonnet 4.6 — ~$1.95 max/day (was 100 → blew $5 budget)
+    "3-opus": 3,   # Opus 4.6 — ~$0.21 max/day (brief only)
 }
 
 # Estimated cost per call (input+output combined, conservative)
@@ -406,6 +406,11 @@ async def call_llm_tiered(
     config = TIER_MODELS.get(tier, TIER_MODELS[1])
     provider = config["provider"]
     model = config["model"]
+
+    # Safety: if daily budget is >80% consumed, force all non-free tiers to Gemini Flash
+    if tier != 0 and _daily_cost_estimate >= _DAILY_BUDGET_USD * 0.80:
+        logger.warning(f"💰 Budget {_daily_cost_estimate:.2f}/{_DAILY_BUDGET_USD:.2f} (≥80%) — forcing Gemini Flash")
+        return await call_llm_tiered(0, system_prompt, user_prompt, temperature, max_tokens, plain_text)
 
     # Safety: check per-tier budget before calling
     if not _check_tier_limit(tier):

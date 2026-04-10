@@ -385,7 +385,7 @@ async def background_predictive_loop():
                             brief = await daily_brief_engine.generate_brief("evening")
                             logger.info(f"☕ Afternoon brief: {brief.get('content', {}).get('headline', '?')}")
             except Exception as e:
-                logger.debug(f"Daily brief: {e}")
+                logger.warning(f"Daily brief generation failed: {e}")
 
         except Exception as e:
             logger.error(f"🤖 AUTONOM PIPELINE FEL: {e}", exc_info=True)
