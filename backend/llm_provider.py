@@ -41,6 +41,15 @@ TIER_MODELS = {
 
 def _init_tier_models():
     """Auto-configure tier models based on available API keys."""
+    # CRITICAL: Ensure Tier 0 (free fallback) actually works
+    if not os.getenv("GOOGLE_API_KEY"):
+        if os.getenv("OPENROUTER_API_KEY"):
+            # No Gemini key → use DeepSeek via OpenRouter as Tier 0 fallback
+            TIER_MODELS[0] = {"provider": "openrouter", "model": "deepseek/deepseek-chat"}
+            logger.warning("⚠️ No GOOGLE_API_KEY — Tier 0 fallback uses DeepSeek via OpenRouter")
+        else:
+            logger.error("🚨 No GOOGLE_API_KEY and no OPENROUTER_API_KEY — Tier 0 will FAIL!")
+
     if os.getenv("OPENROUTER_API_KEY"):
         # Full OpenRouter setup — already configured in TIER_MODELS above
         logger.info("🌐 OpenRouter active: DeepSeek V3 (Tier 1-2), Sonnet (Tier 3), Opus (morning/escalation)")
@@ -255,8 +264,8 @@ def _check_tier_limit(tier) -> bool:
         )
         return False
 
-    _tier_call_counts[tier_key] = current + 1
-    _daily_cost_estimate += cost
+    # NOTE: Don't increment here — increment AFTER successful call
+    # (previously counted failed calls, inflating stats)
     return True
 
 
@@ -403,6 +412,8 @@ async def call_llm_tiered(
     """
     _ensure_tier_models()
 
+    global _tier_call_counts, _daily_cost_estimate
+
     config = TIER_MODELS.get(tier, TIER_MODELS[1])
     provider = config["provider"]
     model = config["model"]
@@ -431,6 +442,9 @@ async def call_llm_tiered(
 
     result = await call_llm(provider, system_prompt, user_prompt, temperature, max_tokens, model, plain_text)
     if result:
+        # Count successful call
+        _tier_call_counts[str(tier)] = _tier_call_counts.get(str(tier), 0) + 1
+        _daily_cost_estimate += TIER_COST_ESTIMATE.get(tier, 0.001)
         return result, f"{provider}/{model}"
 
     # Fallback: try tier 1 if higher tier failed
