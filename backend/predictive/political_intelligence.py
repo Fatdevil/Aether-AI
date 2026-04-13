@@ -589,29 +589,63 @@ class PoliticalIntelligenceEngine:
     def process_sentinel_alert(self, alert: Dict) -> Optional[Dict]:
         """
         HUVUDMETOD v2: Anropas av NewsSentinel vid impact >= 5.
-        Matchar mot aktorer via signal_phrases.
-        Returnerar political signal eller None.
-
-        Sentinel-alert-format:
-        {
-            "title": "...",
-            "impact_score": 7,
-            "category": "geopolitics",
-            "affected_assets": [{"id": "sp500", "direction": "down", "strength": "strong"}],
-            "urgency": "critical",
-        }
+        
+        Matching strategy (broadened in v2.1):
+        1. signal_phrases match (original, exact) → strongest signal
+        2. Actor NAME in title + escalation keywords → medium signal
+        3. Category match (geopolitics/rate_decision) + escalation → weak signal
         """
         title = alert.get("title", "")
         if not title:
             return None
 
+        title_lower = title.lower()
         best_match = None
-        best_signals = 0
+        best_score = 0  # Combined match quality score
 
         for actor in self.get_active_actors():
             rhetoric = self.rhetoric.analyze_statement(actor, title)
-            if rhetoric["n_signals"] > best_signals:
-                best_signals = rhetoric["n_signals"]
+            
+            # Score 1: Exact signal_phrases match (strongest)
+            phrase_score = rhetoric["n_signals"] * 3
+            
+            # Score 2: Actor name appears in title
+            name_parts = actor.name.lower().split()
+            # Match on key name parts (e.g. "Trump", "Powell", "Lagarde", "OPEC")
+            name_match = any(
+                part in title_lower 
+                for part in name_parts 
+                if len(part) > 3  # Skip short words like "of", "the"
+            )
+            name_score = 2 if name_match else 0
+            
+            # Score 3: Category matches actor's policy areas
+            alert_category = alert.get("category", "").lower()
+            category_map = {
+                "geopolitics": [PolicyArea.GEOPOLITICAL, PolicyArea.TRADE],
+                "rate_decision": [PolicyArea.MONETARY],
+                "policy": [PolicyArea.FISCAL, PolicyArea.REGULATORY, PolicyArea.TRADE],
+                "commodity": [PolicyArea.ENERGY],
+            }
+            category_match = False
+            for cat_key, policy_areas in category_map.items():
+                if cat_key in alert_category:
+                    if any(
+                        pa.value in actor.policy_areas or pa in actor.policy_areas
+                        for pa in policy_areas
+                    ):
+                        category_match = True
+                        break
+            cat_score = 1 if category_match else 0
+            
+            # Score 4: Escalation/deescalation keywords detected
+            tone_score = 1 if rhetoric["tone"] != "NEUTRAL" else 0
+            
+            total_score = phrase_score + name_score + cat_score + tone_score
+            
+            # Require at least: (name_match + something) OR (phrase_match)
+            if total_score > best_score and (name_match or rhetoric["n_signals"] > 0):
+                best_score = total_score
                 best_match = {
                     "actor_id": actor.id,
                     "actor_name": actor.name,
@@ -619,6 +653,9 @@ class PoliticalIntelligenceEngine:
                     "escalation_score": rhetoric["escalation_score"],
                     "matched_signals": rhetoric["matched_signals"],
                     "n_signals": rhetoric["n_signals"],
+                    "name_match": name_match,
+                    "category_match": category_match,
+                    "match_quality": total_score,
                     "sentinel_impact": alert.get("impact_score", 0),
                     "sentinel_urgency": alert.get("urgency", "routine"),
                     "sentinel_category": alert.get("category", "other"),
@@ -642,8 +679,8 @@ class PoliticalIntelligenceEngine:
             self._save()
             logger.info(
                 f"Political signal: {best_match['actor_name']} "
-                f"tone={best_match['tone']} signals={best_match['n_signals']} "
-                f"impact={best_match['sentinel_impact']}"
+                f"tone={best_match['tone']} quality={best_match['match_quality']} "
+                f"name={best_match.get('name_match')} impact={best_match['sentinel_impact']}"
             )
 
         return best_match
@@ -653,6 +690,18 @@ class PoliticalIntelligenceEngine:
         Anropas av pipeline:n (L3 PREDICTIVE).
         Returnerar ackumulerat politiskt tillstand — INGA AI-anrop.
         """
+        # Prune stale signals (older than 7 days)
+        cutoff = (datetime.now() - timedelta(days=7)).isoformat()
+        before_count = len(self.active_signals)
+        self.active_signals = [
+            s for s in self.active_signals
+            if s.get("timestamp", "") >= cutoff
+        ]
+        if len(self.active_signals) < before_count:
+            pruned = before_count - len(self.active_signals)
+            logger.info(f"🧹 Pruned {pruned} stale political signals (>7 days)")
+            self._save()
+
         # Samla eskalationsstatus per aktor
         actor_statuses = {}
         for actor in self.get_active_actors():
