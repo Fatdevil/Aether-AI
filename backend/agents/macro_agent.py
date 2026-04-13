@@ -73,7 +73,20 @@ Ge din makro-bedömning som JSON."""
             temperature=0.3,
             max_tokens=400,
         )
+        
+        # Diagnostic logging to find why agents always fall back to rule_based
+        if response:
+            logger.info(f"🔍 MACRO {asset_id}: Got response ({len(response)} chars) from {provider_used}")
+            logger.info(f"🔍 MACRO {asset_id}: First 300 chars: {response[:300]}")
+        else:
+            logger.warning(f"🔍 MACRO {asset_id}: response=None from {provider_used}")
+        
         result = parse_llm_json(response)
+        
+        if result:
+            logger.info(f"🔍 MACRO {asset_id}: Parsed OK, keys={list(result.keys())}")
+        else:
+            logger.warning(f"🔍 MACRO {asset_id}: parse_llm_json returned None")
 
         if result and "score" in result:
             return {
@@ -85,6 +98,7 @@ Ge din makro-bedömning som JSON."""
             }
 
         # Fallback to rule-based
+        logger.warning(f"🔍 MACRO {asset_id}: Falling back to rule_based (result={result is not None}, has_score={'score' in result if result else False})")
         return self._rule_based_fallback(asset_id, price_data, news_items)
 
     def _rule_based_fallback(self, asset_id, price_data, news_items):
