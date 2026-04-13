@@ -7,9 +7,9 @@
 # ============================================================
 
 import numpy as np
-from typing import Dict, List
-from dataclasses import dataclass
-from datetime import datetime
+from typing import Dict, List, Optional
+from dataclasses import dataclass, field
+from datetime import datetime, timezone, timedelta
 import json
 import os
 import logging
@@ -23,10 +23,12 @@ CALIBRATION_FILE = "data/confidence_calibration.json"
 class PredictionRecord:
     prediction_id: str
     stated_probability: float
-    outcome: bool
+    outcome: Optional[bool]  # None = pending, True/False = evaluated
     source: str
     timestamp: str
     asset: str = ""
+    predicted_score: float = 0.0  # Original signed score (-10 to +10)
+    price_at_prediction: float = 0.0  # Price when prediction was made
 
 
 class ConfidenceCalibrator:
@@ -40,8 +42,7 @@ class ConfidenceCalibrator:
             from db import kv_get
             data = kv_get("confidence_calibration")
             if data:
-                self.records = [PredictionRecord(**r) for r in data.get("records", [])]
-                self.calibration_curve = data.get("curve", {})
+                self._parse_records(data)
                 return
         except Exception:
             pass
@@ -49,17 +50,45 @@ class ConfidenceCalibrator:
             try:
                 with open(CALIBRATION_FILE, "r") as f:
                     data = json.load(f)
-                    self.records = [PredictionRecord(**r) for r in data.get("records", [])]
-                    self.calibration_curve = data.get("curve", {})
+                    self._parse_records(data)
             except Exception:
                 pass
 
+    def _parse_records(self, data: dict):
+        """Parse records, handling old format gracefully."""
+        raw_records = data.get("records", [])
+        self.records = []
+        poisoned_count = 0
+        for r in raw_records:
+            # Migrate old format: add missing fields with defaults
+            r.setdefault("predicted_score", 0.0)
+            r.setdefault("price_at_prediction", 0.0)
+            record = PredictionRecord(**r)
+            # Purge poisoned records: outcome=False with no price data = never evaluated
+            if record.outcome is False and record.price_at_prediction == 0.0:
+                poisoned_count += 1
+                continue  # Skip poisoned data
+            self.records.append(record)
+        if poisoned_count > 0:
+            logger.warning(f"🧹 Purged {poisoned_count} poisoned calibration records (outcome=False, no price data)")
+        self.calibration_curve = data.get("curve", {})
+
     def _save(self):
         data = {
-            "records": [{"prediction_id": r.prediction_id, "stated_probability": r.stated_probability,
-                        "outcome": r.outcome, "source": r.source, "timestamp": r.timestamp, "asset": r.asset}
-                       for r in self.records[-5000:]],
-            "curve": self.calibration_curve
+            "records": [
+                {
+                    "prediction_id": r.prediction_id,
+                    "stated_probability": r.stated_probability,
+                    "outcome": r.outcome,
+                    "source": r.source,
+                    "timestamp": r.timestamp,
+                    "asset": r.asset,
+                    "predicted_score": r.predicted_score,
+                    "price_at_prediction": r.price_at_prediction,
+                }
+                for r in self.records[-5000:]
+            ],
+            "curve": self.calibration_curve,
         }
         try:
             from db import kv_set
@@ -69,14 +98,25 @@ class ConfidenceCalibrator:
             with open(CALIBRATION_FILE, "w") as f:
                 json.dump(data, f)
 
-    def log_prediction(self, prediction_id: str, stated_prob: float, source: str, asset: str = ""):
+    def log_prediction(
+        self,
+        prediction_id: str,
+        stated_prob: float,
+        source: str,
+        asset: str = "",
+        predicted_score: float = 0.0,
+        price_at_prediction: float = 0.0,
+    ):
+        """Log a new prediction. Outcome starts as None (pending evaluation)."""
         self.records.append(PredictionRecord(
             prediction_id=prediction_id,
             stated_probability=stated_prob,
-            outcome=False,
+            outcome=None,  # PENDING — will be evaluated by auto_evaluate_outcomes()
             source=source,
-            timestamp=datetime.now().isoformat(),
-            asset=asset
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            asset=asset,
+            predicted_score=predicted_score,
+            price_at_prediction=price_at_prediction,
         ))
         self._save()
 
@@ -86,6 +126,93 @@ class ConfidenceCalibrator:
                 record.outcome = outcome
                 break
         self._save()
+
+    def auto_evaluate_outcomes(self, current_prices: dict) -> dict:
+        """Automatically evaluate pending predictions against actual price movement.
+        
+        Called every pipeline run. Compares predicted direction (score sign)
+        with actual price change since prediction was made.
+        
+        Args:
+            current_prices: dict of {asset_id: {"price": float, "changePct": float}}
+        
+        Returns:
+            Summary of evaluations performed.
+        """
+        now = datetime.now(timezone.utc)
+        evaluated = 0
+        correct = 0
+        skipped = 0
+        
+        for record in self.records:
+            # Skip already evaluated
+            if record.outcome is not None:
+                continue
+            
+            # Need asset and price data
+            if not record.asset or record.price_at_prediction <= 0:
+                skipped += 1
+                continue
+            
+            # Must be at least 4 hours old
+            try:
+                pred_time = datetime.fromisoformat(record.timestamp)
+                if pred_time.tzinfo is None:
+                    pred_time = pred_time.replace(tzinfo=timezone.utc)
+                hours_since = (now - pred_time).total_seconds() / 3600
+                if hours_since < 4:
+                    continue  # Too soon to evaluate
+            except (ValueError, TypeError):
+                skipped += 1
+                continue
+            
+            # Get current price for this asset
+            asset_data = current_prices.get(record.asset)
+            if not asset_data:
+                continue
+            
+            current_price = asset_data.get("price", 0)
+            if current_price <= 0:
+                continue
+            
+            # Calculate actual price change since prediction
+            actual_change_pct = ((current_price - record.price_at_prediction) / record.price_at_prediction) * 100
+            
+            # Determine if prediction was correct
+            # Score > 0 = predicted UP, Score < 0 = predicted DOWN
+            predicted_direction = 1 if record.predicted_score > 0 else -1 if record.predicted_score < 0 else 0
+            actual_direction = 1 if actual_change_pct > 0.2 else -1 if actual_change_pct < -0.2 else 0
+            
+            if actual_direction == 0:
+                # Very small move (±0.2%) — consider prediction "correct" (market was flat)
+                record.outcome = True
+            elif predicted_direction == 0:
+                # We predicted neutral, market moved — incorrect
+                record.outcome = False
+            else:
+                # Direction match?
+                record.outcome = (predicted_direction == actual_direction)
+            
+            evaluated += 1
+            if record.outcome:
+                correct += 1
+        
+        if evaluated > 0:
+            self._save()
+            accuracy = correct / evaluated
+            logger.info(
+                f"📊 Calibration: evaluated {evaluated} predictions, "
+                f"{correct}/{evaluated} correct ({accuracy:.0%})"
+            )
+        
+        return {
+            "evaluated": evaluated,
+            "correct": correct,
+            "accuracy": round(correct / evaluated, 3) if evaluated > 0 else 0,
+            "skipped": skipped,
+            "pending": sum(1 for r in self.records if r.outcome is None),
+            "total_with_outcomes": sum(1 for r in self.records if r.outcome is not None),
+        }
 
     def compute_calibration(self, n_bins: int = 10) -> Dict:
         evaluated = [r for r in self.records if r.outcome is not None]
@@ -149,8 +276,21 @@ class ConfidenceCalibrator:
         }
 
     def adjust_probability(self, raw_probability: float) -> float:
+        """Adjust probability using calibration curve.
+        
+        GUARD: Only apply calibration if we have verified outcomes.
+        Without real outcomes, the curve is poisoned (all outcome=False)
+        and crushes confidence to the 0.15 floor.
+        """
+        # Check if we have ANY true outcomes (real evaluation data)
+        true_outcomes = sum(1 for r in self.records if r.outcome is True)
+        if true_outcomes < 20:
+            # Not enough real data — return raw probability with basic clamping
+            return max(0.15, min(0.99, raw_probability))
+
         if not self.calibration_curve:
-            return raw_probability
+            return max(0.15, min(0.99, raw_probability))
+
         bin_idx = min(int(raw_probability * 10), 9)
         bin_key = f"{bin_idx * 10}-{(bin_idx + 1) * 10}%"
         adjustment = self.calibration_curve.get(bin_key, 1.0)

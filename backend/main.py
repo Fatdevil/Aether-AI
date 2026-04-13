@@ -310,16 +310,36 @@ async def background_predictive_loop():
                 except Exception as e:
                     logger.error(f"Adversarial failed: {e}")
 
-            # ---- AUTO: Confidence logging ----
-            for rec in recs[:5]:
+            # ---- AUTO: Confidence logging + evaluation ----
+            # First: evaluate PAST predictions against current prices
+            try:
+                from market_data import get_all_prices
+                current_prices = get_all_prices() or {}
+                eval_result = confidence_cal.auto_evaluate_outcomes(current_prices)
+                if eval_result.get("evaluated", 0) > 0:
+                    logger.info(
+                        f"📊 Calibration eval: {eval_result['correct']}/{eval_result['evaluated']} "
+                        f"correct ({eval_result['accuracy']:.0%}), "
+                        f"{eval_result['pending']} pending, "
+                        f"{eval_result['total_with_outcomes']} total evaluated"
+                    )
+            except Exception as e:
+                logger.debug(f"Calibration evaluation skipped: {e}")
+
+            # Then: log NEW predictions with score direction and current price
+            for rec in recs[:8]:  # All assets, not just top 5
                 try:
-                    score = abs(rec.get("weighted_score", 0))
-                    prob = min(score / 10, 0.95)  # Normalisera till 0-1
+                    raw_score = rec.get("weighted_score", 0)
+                    prob = min(abs(raw_score) / 10, 0.95)
+                    asset_id = rec.get("asset", "")
+                    price = current_prices.get(asset_id, {}).get("price", 0) if current_prices else 0
                     confidence_cal.log_prediction(
-                        prediction_id=f"pipeline_{_pipeline_run_count}_{rec.get('asset', '')}",
+                        prediction_id=f"pipeline_{_pipeline_run_count}_{asset_id}",
                         stated_prob=prob,
                         source="pipeline",
-                        asset=rec.get("asset", "")
+                        asset=asset_id,
+                        predicted_score=raw_score,
+                        price_at_prediction=price,
                     )
                 except Exception:
                     pass

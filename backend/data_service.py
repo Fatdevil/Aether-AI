@@ -270,10 +270,17 @@ class DataService:
                 try:
                     from predictive.confidence_calibrator import ConfidenceCalibrator
                     calibrator = ConfidenceCalibrator()
-                    # Log this prediction for future calibration
+                    # Log this prediction with direction + price for auto-evaluation
                     raw_conf = analysis.get("supervisorConfidence", 0.5)
                     pred_id = f"{asset_id}_{datetime.now().strftime('%Y%m%d_%H%M')}"
-                    calibrator.log_prediction(pred_id, raw_conf, "supervisor", asset=asset_id)
+                    raw_score = analysis.get("finalScore", 0)
+                    current_price = price_data.get("price", 0) if price_data else 0
+                    calibrator.log_prediction(
+                        pred_id, raw_conf, "supervisor",
+                        asset=asset_id,
+                        predicted_score=raw_score,
+                        price_at_prediction=current_price,
+                    )
                     # Apply calibration to displayed confidence
                     calibrated_conf = calibrator.adjust_probability(raw_conf)
                     if abs(calibrated_conf - raw_conf) > 0.02:
