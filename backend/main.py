@@ -3425,6 +3425,14 @@ if os.path.isdir(_dist_path):
     @app.get("/{path:path}")
     async def serve_spa(path: str):
         """Serve frontend for all non-API routes (SPA fallback)."""
+        # Protect API routes from returning HTML catch-all
+        if path.startswith("api/"):
+            import fastapi.responses
+            return fastapi.responses.JSONResponse(
+                status_code=404, 
+                content={"error": "API endpoint not found in Aether AI backend", "path": path}
+            )
+
         # If the exact file exists in dist, serve it
         file_path = os.path.join(_dist_path, path)
         if path and os.path.isfile(file_path):
