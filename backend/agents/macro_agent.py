@@ -74,20 +74,8 @@ Ge din makro-bedömning som JSON."""
             max_tokens=400,
         )
         
-        # Diagnostic logging to find why agents always fall back to rule_based
-        if response:
-            logger.info(f"🔍 MACRO {asset_id}: Got response ({len(response)} chars) from {provider_used}")
-            logger.info(f"🔍 MACRO {asset_id}: First 300 chars: {response[:300]}")
-        else:
-            logger.warning(f"🔍 MACRO {asset_id}: response=None from {provider_used}")
-        
         result = parse_llm_json(response)
         
-        if result:
-            logger.info(f"🔍 MACRO {asset_id}: Parsed OK, keys={list(result.keys())}")
-        else:
-            logger.warning(f"🔍 MACRO {asset_id}: parse_llm_json returned None")
-
         if result and "score" in result:
             return {
                 "score": self._clamp_score(int(result["score"])),
