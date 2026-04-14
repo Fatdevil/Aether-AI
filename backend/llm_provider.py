@@ -673,6 +673,9 @@ def parse_llm_json(text: Optional[str]) -> Optional[dict]:
     
     import re
     
+    # Strip <think>...</think> tags which DeepSeek reasoner models sometimes output
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    
     try:
         return json.loads(text.strip())
     except (json.JSONDecodeError, ValueError):
