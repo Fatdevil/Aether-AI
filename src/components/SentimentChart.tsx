@@ -130,8 +130,8 @@ export default function SentimentChart({ assetId, assetName, color }: SentimentC
                 background: 'rgba(15,15,25,0.95)', border: '1px solid rgba(255,255,255,0.1)',
                 borderRadius: '6px', fontSize: '0.7rem',
               }}
-              formatter={(val: any) => [(Number(val) * 100).toFixed(1) + '%', 'Sentiment']}
-              labelFormatter={((label: any) => `Datum: ${label}`) as any}
+              formatter={(val: number) => [(Number(val) * 100).toFixed(1) + '%', 'Sentiment']}
+              labelFormatter={(label: string) => `Datum: ${label}`}
             />
             <ReferenceLine y={0} stroke="rgba(255,255,255,0.15)" strokeDasharray="3 3" />
             <Area

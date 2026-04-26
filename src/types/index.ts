@@ -78,6 +78,20 @@ export interface NewsItem {
   sentiment: 'positive' | 'negative' | 'neutral';
   category: string;
   summary: string;
+  url?: string;
+  // Extended API fields
+  tickers?: string[];
+  data_source?: string;
+  impact?: {
+    score: number;
+    category: string;
+    urgency: string;
+    one_liner: string;
+    affected_assets: Array<{ id: string; direction: 'up' | 'down' | 'mixed'; strength: 'weak' | 'moderate' | 'strong'; reason: string }>;
+    affected_sectors: Array<{ id: string; direction: 'up' | 'down' | 'mixed'; reason: string }>;
+    affected_regions: string[];
+    provider: string;
+  };
 }
 
 export interface PortfolioAllocation {

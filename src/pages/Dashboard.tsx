@@ -220,7 +220,7 @@ export default function Dashboard({ assets, marketState, prices }: DashboardProp
                 {/* Agent Scores Row */}
                 <div className="asset-agents-row">
                   {['macro', 'micro', 'sentiment', 'tech'].map(agent => {
-                    const agentScore = (asset.scores as any)?.[agent] ?? 0;
+                    const agentScore = (asset.scores as Record<string, number>)?.[agent] ?? 0;
                     return (
                       <MiniAgent key={agent} label={agent} score={agentScore} />
                     );

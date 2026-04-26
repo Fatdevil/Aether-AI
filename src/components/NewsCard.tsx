@@ -67,9 +67,9 @@ function getStrengthLabel(s: string): string {
 
 export default function NewsCard({ item }: NewsCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const tickers = (item as any).tickers as string[] | undefined;
-  const dataSource = (item as any).data_source as string | undefined;
-  const impact = (item as any).impact as NewsImpact | undefined;
+  const tickers = item.tickers;
+  const dataSource = item.data_source;
+  const impact = item.impact;
   // Only show detailed analysis for important news with AI-generated unique commentary
   const isSignificant = impact && impact.score >= 7;
   const hasAIAnalysis = isSignificant && impact.provider === 'gemini';

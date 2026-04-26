@@ -194,7 +194,7 @@ export function useLiveData(): LiveData {
         sentiment: n.sentiment,
         category: n.category,
         summary: n.summary,
-        ...((n as any).impact ? { impact: (n as any).impact } : {}),
+        ...(n.impact ? { impact: n.impact } : {}),
       }))
     : mockNews;
 

@@ -2,7 +2,33 @@ import { useState } from 'react';
 // import { motion, AnimatePresence } from 'framer-motion';
 import { TrendingUp, Globe2, Newspaper, BarChart3, Zap, WifiOff } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { api, type APISector, type APIRegion, type APINewsItem } from '../api/client';
+
+// Local types for data shapes used in this page
+interface CausalChain {
+  trigger_event?: string;
+  title?: string;
+  current_step_description?: string;
+  description?: string;
+  portfolio_impact?: string;
+  severity?: string;
+}
+
+interface Narrative {
+  name?: string;
+  title?: string;
+  strength?: string;
+  momentum?: string;
+}
+
+interface PipelineRun {
+  status: string;
+  run_number?: number;
+  timestamp?: string;
+  completed_at?: string;
+  duration_seconds?: number;
+  assets_analyzed?: number;
+}
 
 type SubTab = 'scenarios' | 'sectors' | 'news' | 'backtest';
 
@@ -104,7 +130,7 @@ function ScenariosTab() {
           <Zap size={18} color="var(--accent-gold)" />
           Aktiva kausala kedjor
         </h3>
-        {activeChains.length > 0 ? activeChains.slice(0, 5).map((chain: any, i: number) => (
+        {activeChains.length > 0 ? activeChains.slice(0, 5).map((chain: CausalChain, i: number) => (
           <div key={i} style={{
             padding: '1rem',
             background: 'rgba(255,255,255,0.03)',
@@ -134,7 +160,7 @@ function ScenariosTab() {
         <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           📖 Marknadens narrativ
         </h3>
-        {narratives.length > 0 ? narratives.slice(0, 4).map((n: any, i: number) => (
+        {narratives.length > 0 ? narratives.slice(0, 4).map((n: Narrative, i: number) => (
           <div key={i} style={{
             padding: '0.75rem 1rem',
             background: 'rgba(255,255,255,0.03)',
@@ -180,7 +206,7 @@ function SectorsTab() {
       <div className="glass-panel" style={{ padding: '1.5rem' }}>
         <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>🏭 Sektorer</h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.75rem' }}>
-          {(sectors || []).map((s: any) => (
+          {(sectors || []).map((s: APISector) => (
             <RotationCard key={s.id} item={s} />
           ))}
         </div>
@@ -190,7 +216,7 @@ function SectorsTab() {
       <div className="glass-panel" style={{ padding: '1.5rem' }}>
         <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>🌍 Regioner</h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.75rem' }}>
-          {(regions || []).map((r: any) => (
+          {(regions || []).map((r: APIRegion) => (
             <RotationCard key={r.id} item={r} />
           ))}
         </div>
@@ -199,7 +225,7 @@ function SectorsTab() {
   );
 }
 
-function RotationCard({ item }: { item: any }) {
+function RotationCard({ item }: { item: APISector | APIRegion }) {
   const signal = item.rotationSignal || item.allocationSignal || 'Neutralvikt';
   const signalColor = signal === 'Övervikt' ? 'var(--score-positive)' : signal === 'Undervikt' ? 'var(--score-negative)' : 'var(--score-neutral)';
   const changePct = item.changePct || 0;
@@ -249,7 +275,7 @@ function NewsTab() {
   return (
     <div className="glass-panel" style={{ padding: '1.5rem' }}>
       <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>📰 Senaste nyheterna</h3>
-      {(news || []).slice(0, 15).map((n: any, i: number) => {
+      {(news || []).slice(0, 15).map((n: APINewsItem, i: number) => {
         const sentColor = n.sentiment === 'positive' ? 'var(--score-positive)' : n.sentiment === 'negative' ? 'var(--score-negative)' : 'var(--text-tertiary)';
         const impact = n.impact?.score || 0;
         return (
@@ -314,7 +340,7 @@ function BacktestTab() {
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem' }}>
         Senaste körningar av den autonoma AI-pipelinen
       </p>
-      {(data?.history || []).slice(0, 10).map((run: any, i: number) => (
+      {(data?.history || []).slice(0, 10).map((run: PipelineRun, i: number) => (
         <div key={i} style={{
           padding: '0.75rem 1rem',
           background: 'rgba(255,255,255,0.03)',

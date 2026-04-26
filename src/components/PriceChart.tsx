@@ -71,7 +71,7 @@ export default function PriceChart({ assetId, assetName, height = 300 }: PriceCh
       wickDownColor: '#ef444480',
     });
 
-    const candles = data.candles.map((c: any) => ({
+    const candles = data.candles.map((c: { time: string; open: number; high: number; low: number; close: number }) => ({
       time: c.time,
       open: c.open,
       high: c.high,

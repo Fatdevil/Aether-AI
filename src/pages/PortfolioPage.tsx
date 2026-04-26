@@ -48,7 +48,14 @@ interface CSPortfolio {
   };
   portfolio_value?: number;
   tier?: string;
-  suggested_trades?: any[];
+  suggested_trades?: SuggestedTrade[];
+}
+
+interface SuggestedTrade {
+  asset: string;
+  action: 'KÖP' | 'SÄLJ';
+  amount_sek?: number;
+  reason?: string;
 }
 
 const LAYER_COLORS = {
@@ -82,8 +89,8 @@ export default function PortfolioPage() {
       const data = await api.getCoreSatellite(700000, 'avanza');
       setPortfolio(data);
       setError(null);
-    } catch (err: any) {
-      setError(err.message || 'Kunde inte hämta portfölj');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Kunde inte hämta portfölj');
     } finally {
       setLoading(false);
     }
@@ -190,7 +197,7 @@ export default function PortfolioPage() {
               background: 'rgba(102,126,234,0.15)', border: '1px solid rgba(102,126,234,0.3)',
               fontSize: '0.7rem', color: '#667eea',
             }}>
-              {typeof portfolio.tier === 'string' ? portfolio.tier : (portfolio.tier as any)?.name || 'Premium'}
+              {typeof portfolio.tier === 'string' ? portfolio.tier : (portfolio.tier as string) || 'Premium'}
             </div>
           )}
         </div>
@@ -243,7 +250,7 @@ export default function PortfolioPage() {
                   ))}
                 </Pie>
                 <Tooltip
-                  formatter={(value: any) => `${value}%`}
+                  formatter={(value: number) => `${value}%`}
                   contentStyle={{
                     backgroundColor: '#13141f', borderColor: 'rgba(255,255,255,0.08)',
                     borderRadius: '8px', color: '#f8f9fa', fontSize: '0.8rem',
@@ -362,7 +369,7 @@ export default function PortfolioPage() {
             Föreslagna Rebalanseringar
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {portfolio.suggested_trades.map((trade: any, i: number) => (
+            {portfolio.suggested_trades.map((trade: SuggestedTrade, i: number) => (
               <div key={i} style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 padding: '0.6rem 0.75rem', borderRadius: '6px',

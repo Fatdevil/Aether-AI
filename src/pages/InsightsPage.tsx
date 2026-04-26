@@ -2,7 +2,7 @@ import { useState } from 'react';
 // import { motion, AnimatePresence } from 'framer-motion';
 import { Brain, Shield, History, Users, ChevronDown, ChevronUp, BarChart3, Bitcoin, Globe, Coins, Droplet, DollarSign, LineChart, Gem } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { api, type APIAsset } from '../api/client';
 
 // L3 FIX: Map API icon strings/category to Lucide components
 const ICON_MAP: Record<string, typeof Brain> = {
@@ -107,7 +107,7 @@ function SupervisorTab() {
   if (isLoading) return <LoadingState />;
 
   // Sort by absolute score DESC
-  const sorted = [...(assets || [])].sort((a: any, b: any) => Math.abs(b.finalScore) - Math.abs(a.finalScore));
+  const sorted = [...(assets || [])].sort((a: APIAsset, b: APIAsset) => Math.abs(b.finalScore) - Math.abs(a.finalScore));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -126,7 +126,7 @@ function SupervisorTab() {
       {/* Top Supervisor Recommendations */}
       <div className="glass-panel" style={{ padding: '1.5rem' }}>
         <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>🧠 Supervisor — Top rekommendationer</h3>
-        {sorted.slice(0, 8).map((asset: any) => (
+        {sorted.slice(0, 8).map((asset: APIAsset) => (
           <AssetInsightCard key={asset.id} asset={asset} />
         ))}
       </div>
@@ -134,7 +134,7 @@ function SupervisorTab() {
   );
 }
 
-function AssetInsightCard({ asset }: { asset: any }) {
+function AssetInsightCard({ asset }: { asset: APIAsset }) {
   const [expanded, setExpanded] = useState(false);
   const score = asset.finalScore || 0;
   const scoreColor = score > 2 ? 'var(--score-positive)' : score < -2 ? 'var(--score-negative)' : 'var(--score-neutral)';
@@ -235,7 +235,7 @@ function AgentsTab() {
             </tr>
           </thead>
           <tbody>
-            {(assets || []).map((a: any) => (
+            {(assets || []).map((a: APIAsset) => (
               <tr key={a.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                 <td style={{ padding: '0.6rem 0.5rem', fontWeight: 500 }}><AssetIconInline icon={a.icon} color={a.color || 'var(--text-secondary)'} /> {a.name}</td>
                 <td style={{ textAlign: 'center', padding: '0.6rem 0.5rem' }}><ScorePill value={a.scores?.macro} /></td>
@@ -300,7 +300,7 @@ function PerformanceTab() {
       <div className="glass-panel" style={{ padding: '1.5rem' }}>
         <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>⚖️ Metodvikter</h3>
         {meta?.weights ? (
-          Object.entries(meta.weights).map(([method, weight]: [string, any]) => (
+          Object.entries(meta.weights).map(([method, weight]: [string, number]) => (
             <div key={method} style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               padding: '0.5rem 0',
@@ -340,7 +340,7 @@ function AdversarialTab() {
   });
 
   // Show strong signals that could be challenged
-  const strong = (assets || []).filter((a: any) => Math.abs(a.finalScore || 0) > 3);
+  const strong = (assets || []).filter((a: APIAsset) => Math.abs(a.finalScore || 0) > 3);
 
   return (
     <div className="glass-panel" style={{ padding: '1.5rem' }}>
@@ -348,7 +348,7 @@ function AdversarialTab() {
       <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1rem' }}>
         AI utmanar sina egna starka rekommendationer för att hitta blinda fläckar.
       </p>
-      {strong.length > 0 ? strong.map((asset: any) => {
+      {strong.length > 0 ? strong.map((asset: APIAsset) => {
         // L3 FIX: Resolve icon safely
         const AssetIcon2 = resolveIcon(asset);
         const score = asset.finalScore || 0;
@@ -398,7 +398,7 @@ function MiniStat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function AssetIconInline({ icon: Icon, color }: { icon: any; color: string }) {
+function AssetIconInline({ icon: Icon, color }: { icon: typeof Brain; color: string }) {
   if (typeof Icon === 'function') {
     return <Icon size={14} color={color} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '0.3rem' }} />;
   }

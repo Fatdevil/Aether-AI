@@ -45,6 +45,19 @@ export interface APINewsItem {
   category: string;
   summary: string;
   url: string;
+  // Extended fields from enriched news
+  tickers?: string[];
+  data_source?: string;
+  impact?: {
+    score: number;
+    category: string;
+    urgency: string;
+    one_liner: string;
+    affected_assets: Array<{ id: string; direction: string; strength: string; reason: string }>;
+    affected_sectors: Array<{ id: string; direction: string; reason: string }>;
+    affected_regions: string[];
+    provider: string;
+  };
 }
 
 export interface APIPortfolio {
@@ -218,76 +231,76 @@ class AetherAPI {
 
   // ---- Predictive Intelligence (Del 4B + 5) ----
 
-  async getPredictiveSummary(): Promise<any> {
+  async getPredictiveSummary(): Promise<APIPredictiveSummary> {
     return this.fetch('/api/predictive/summary');
   }
 
-  async getEventLog(): Promise<any> {
+  async getEventLog(): Promise<APIEventLog> {
     return this.fetch('/api/predictive/event-log');
   }
 
-  async getUnprocessedEvents(): Promise<any> {
+  async getUnprocessedEvents(): Promise<APIUnprocessedEvents> {
     return this.fetch('/api/predictive/unprocessed-events');
   }
 
-  async runPipeline(): Promise<any> {
+  async runPipeline(): Promise<APIPipelineResult> {
     const response = await fetch(`${this.baseUrl}/api/predictive/run-pipeline`, { method: 'POST' });
     return response.json();
   }
 
-  async getActorIntelligence(): Promise<any> {
+  async getActorIntelligence(): Promise<APIActorIntelligence> {
     return this.fetch('/api/predictive/actor-intelligence');
   }
 
-  async runActorSimulation(event: string, context: string = ''): Promise<any> {
+  async runActorSimulation(event: string, context: string = ''): Promise<APIActorSimulationResult> {
     const response = await fetch(`${this.baseUrl}/api/predictive/actor-simulation?event=${encodeURIComponent(event)}&context=${encodeURIComponent(context)}`, { method: 'POST' });
     return response.json();
   }
 
-  async getConfidence(): Promise<any> {
+  async getConfidence(): Promise<APIConfidenceData> {
     return this.fetch('/api/predictive/confidence');
   }
 
-  async getMetaStrategy(): Promise<any> {
+  async getMetaStrategy(): Promise<APIMetaStrategy> {
     return this.fetch('/api/predictive/meta-strategy');
   }
 
-  async runAdversarialCheck(asset: string, action: string, reasoning: string): Promise<any> {
+  async runAdversarialCheck(asset: string, action: string, reasoning: string): Promise<APIAdversarialResult> {
     const response = await fetch(`${this.baseUrl}/api/predictive/adversarial-check?asset=${encodeURIComponent(asset)}&action=${encodeURIComponent(action)}&reasoning=${encodeURIComponent(reasoning)}`, { method: 'POST' });
     return response.json();
   }
 
-  async getSystemHealth(): Promise<any> {
+  async getSystemHealth(): Promise<APISystemHealth> {
     return this.fetch('/api/system/health');
   }
 
-  async getAutoStatus(): Promise<any> {
+  async getAutoStatus(): Promise<APIAutoStatus> {
     return this.fetch('/api/predictive/auto-status');
   }
 
-  async getCausalChainsActive(): Promise<any> {
+  async getCausalChainsActive(): Promise<APICausalChains> {
     return this.fetch('/api/predictive/causal-chain/active');
   }
 
-  async getLeadLagNetwork(): Promise<any> {
+  async getLeadLagNetwork(): Promise<APILeadLagNetwork> {
     return this.fetch('/api/predictive/lead-lag/network');
   }
 
-  async getPipelineHistory(): Promise<any> {
+  async getPipelineHistory(): Promise<APIPipelineHistory> {
     return this.fetch('/api/predictive/pipeline-history');
   }
 
-  async convexityOptimize(): Promise<any> {
+  async convexityOptimize(): Promise<APIConvexityResult> {
     const response = await fetch(`${this.baseUrl}/api/predictive/convexity-optimize`, { method: 'POST' });
     return response.json();
   }
 
-  async getConvexPositions(): Promise<any> {
+  async getConvexPositions(): Promise<APIConvexPositions> {
     return this.fetch('/api/predictive/event-tree/convex-positions');
   }
 
   // -- Del 3: Operational Tools --
-  async getTaxComparison(holdings: any[], totalIskValue: number = 0): Promise<any> {
+  async getTaxComparison(holdings: Array<{ asset_id: string; weight: number }>, totalIskValue: number = 0): Promise<APITaxComparison> {
     const response = await fetch(`${this.baseUrl}/api/tax-comparison`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -296,7 +309,7 @@ class AetherAPI {
     return response.json();
   }
 
-  async getCurrencyHedge(weights: Record<string, number>): Promise<any> {
+  async getCurrencyHedge(weights: Record<string, number>): Promise<APICurrencyHedge> {
     const response = await fetch(`${this.baseUrl}/api/currency-hedge`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -305,7 +318,7 @@ class AetherAPI {
     return response.json();
   }
 
-  async shouldRebalance(current: Record<string, number>, target: Record<string, number>, regimeChanged: boolean = false, portfolioValue: number = 0): Promise<any> {
+  async shouldRebalance(current: Record<string, number>, target: Record<string, number>, regimeChanged: boolean = false, portfolioValue: number = 0): Promise<APIRebalanceResult> {
     const response = await fetch(`${this.baseUrl}/api/should-rebalance`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -314,58 +327,58 @@ class AetherAPI {
     return response.json();
   }
 
-  async getDrawdownRecovery(drawdownPct: number, annualReturn: number = 0.08, volatility: number = 0.12): Promise<any> {
+  async getDrawdownRecovery(drawdownPct: number, annualReturn: number = 0.08, volatility: number = 0.12): Promise<APIDrawdownRecovery> {
     return this.fetch(`/api/drawdown-recovery?drawdown_pct=${drawdownPct}&annual_return=${annualReturn}&volatility=${volatility}`);
   }
 
-  async getCostSummary(): Promise<any> {
+  async getCostSummary(): Promise<APICostSummary> {
     return this.fetch('/api/cost-summary');
   }
 
-  async getNarratives(): Promise<any> {
+  async getNarratives(): Promise<APINarratives> {
     return this.fetch('/api/predictive/narratives');
   }
 
   // ---- Alpha vs Omega: Dual Portfolio ----
 
-  async getDualPortfolio(): Promise<any> {
+  async getDualPortfolio(): Promise<APIDualPortfolio> {
     return this.fetch('/api/portfolio/dual');
   }
 
-  async getScenarios(): Promise<any> {
+  async getScenarios(): Promise<APIScenarios> {
     return this.fetch('/api/portfolio/scenarios');
   }
 
-  async refreshScenarios(): Promise<any> {
+  async refreshScenarios(): Promise<{ status: string }> {
     const response = await fetch(`${this.baseUrl}/api/portfolio/scenarios/refresh`, { method: 'POST' });
     return response.json();
   }
 
   // ---- Core-Satellite Portfolio ----
 
-  async getCoreSatellite(portfolioValue: number = 700000, broker: string = 'avanza'): Promise<any> {
+  async getCoreSatellite(portfolioValue: number = 700000, broker: string = 'avanza'): Promise<APICoreSatellite> {
     return this.fetch(`/api/core-satellite?portfolio_value=${portfolioValue}&broker=${broker}`);
   }
 
   // ---- Price History (TradingView charts) ----
 
-  async getPriceHistory(assetId: string, period: string = '3mo'): Promise<any> {
+  async getPriceHistory(assetId: string, period: string = '3mo'): Promise<APIPriceHistory> {
     return this.fetch(`/api/prices/history/${assetId}?period=${period}`);
   }
 
   // ---- Daily Brief (Opus-powered) ----
 
-  async getLatestBrief(type?: string): Promise<any> {
+  async getLatestBrief(type?: string): Promise<APIBrief> {
     const url = type ? `/api/brief/latest?type=${type}` : '/api/brief/latest';
     return this.fetch(url);
   }
 
-  async generateBrief(type: string = 'morning'): Promise<any> {
+  async generateBrief(type: string = 'morning'): Promise<APIBrief> {
     const response = await fetch(`${this.baseUrl}/api/brief/generate?type=${type}`, { method: 'POST' });
     return response.json();
   }
 
-  async getBriefHistory(limit: number = 14): Promise<any> {
+  async getBriefHistory(limit: number = 14): Promise<APIBriefHistory> {
     return this.fetch(`/api/brief/history?limit=${limit}`);
   }
 }
@@ -376,7 +389,7 @@ export interface APIRegimeData {
   label: string;
   description: string;
   confidence: number;
-  signals: Record<string, any>;
+  signals: Record<string, { value: number; signal: string; description?: string }>;
   agent_guidance: Record<string, string>;
   weight_adjustments: Record<string, number>;
   detected_at: string;
@@ -499,6 +512,300 @@ export interface SentinelStats {
   alerts_triggered: number;
   critical_alerts: number;
   last_scan: string | null;
+}
+
+// ---- Predictive Intelligence Types ----
+
+export interface APIPredictiveSummary {
+  predictions: Array<{
+    asset_id: string;
+    predicted_move: number;
+    confidence: number;
+    reasoning: string;
+    timeframe: string;
+  }>;
+  model_version: string;
+  generated_at: string;
+}
+
+export interface APIEventLog {
+  events: Array<{
+    id: string;
+    event_type: string;
+    description: string;
+    impact_score: number;
+    affected_assets: string[];
+    timestamp: string;
+    processed: boolean;
+  }>;
+  count: number;
+}
+
+export interface APIUnprocessedEvents {
+  events: Array<{
+    id: string;
+    event_type: string;
+    description: string;
+    timestamp: string;
+  }>;
+  count: number;
+}
+
+export interface APIPipelineResult {
+  status: string;
+  layers_completed: number;
+  duration_seconds: number;
+  timestamp: string;
+  assets_analyzed: number;
+}
+
+export interface APIActorIntelligence {
+  actors: Array<{
+    name: string;
+    type: string;
+    influence_score: number;
+    recent_actions: string[];
+    market_impact: string;
+  }>;
+}
+
+export interface APIActorSimulationResult {
+  scenario: string;
+  impact_analysis: string;
+  affected_assets: Array<{ asset_id: string; expected_impact: number }>;
+  confidence: number;
+}
+
+export interface APIConfidenceData {
+  assets: Record<string, {
+    raw_confidence: number;
+    calibrated_confidence: number;
+    adjustment: number;
+    historical_accuracy: number;
+  }>;
+  model_stats: {
+    total_predictions: number;
+    accuracy_pct: number;
+    calibration_score: number;
+  };
+}
+
+export interface APIMetaStrategy {
+  weights: Record<string, number>;
+  reasoning: string;
+  regime_adapted: boolean;
+  performance_score: number;
+}
+
+export interface APIAdversarialResult {
+  challenge: string;
+  counter_arguments: string[];
+  risk_factors: string[];
+  adjusted_confidence: number;
+  verdict: string;
+}
+
+export interface APISystemHealth {
+  status: string;
+  uptime_seconds: number;
+  memory_mb: number;
+  api_calls_today: number;
+  last_pipeline_run: string | null;
+  database_status: string;
+  components: Record<string, { status: string; latency_ms?: number }>;
+}
+
+export interface APIAutoStatus {
+  enabled: boolean;
+  interval_hours: number;
+  last_run: string | null;
+  next_run: string | null;
+  run_count: number;
+}
+
+export interface APICausalChains {
+  active_chains: Array<{
+    id: string;
+    trigger_event: string;
+    chain_steps: Array<{ description: string; probability: number; timeframe: string }>;
+    affected_assets: string[];
+    status: string;
+    created_at: string;
+  }>;
+  count: number;
+}
+
+export interface APILeadLagNetwork {
+  nodes: Array<{ id: string; label: string; category: string }>;
+  edges: Array<{ source: string; target: string; lag_days: number; correlation: number }>;
+}
+
+export interface APIPipelineHistory {
+  history: Array<{
+    timestamp: string;
+    duration_seconds: number;
+    layers_completed: number;
+    assets_analyzed: number;
+    status: string;
+  }>;
+  total_runs: number;
+}
+
+export interface APIConvexityResult {
+  positions: Array<{
+    asset_id: string;
+    type: string;
+    expected_payoff: number;
+    risk: number;
+    convexity_score: number;
+  }>;
+  total_expected_return: number;
+}
+
+export interface APIConvexPositions {
+  positions: Array<{
+    asset_id: string;
+    position_type: string;
+    entry_condition: string;
+    potential_return: number;
+    risk_pct: number;
+  }>;
+}
+
+// ---- Operational Tools Types ----
+
+export interface APITaxComparison {
+  isk: { tax_cost: number; effective_rate: number; explanation: string };
+  kf: { tax_cost: number; effective_rate: number; explanation: string };
+  recommendation: string;
+  savings: number;
+}
+
+export interface APICurrencyHedge {
+  exposure: Record<string, number>;
+  hedge_recommendations: Array<{
+    currency: string;
+    exposure_pct: number;
+    hedge_pct: number;
+    instrument: string;
+  }>;
+  total_foreign_exposure: number;
+}
+
+export interface APIRebalanceResult {
+  should_rebalance: boolean;
+  urgency: string;
+  drift_pct: number;
+  cost_estimate: number;
+  trades: Array<{ asset_id: string; action: 'buy' | 'sell'; weight_change: number }>;
+  reasoning: string;
+}
+
+export interface APIDrawdownRecovery {
+  drawdown_pct: number;
+  expected_recovery_months: number;
+  scenarios: Array<{ label: string; months: number; probability: number }>;
+  historical_reference: string;
+}
+
+export interface APICostSummary {
+  today: number;
+  this_week: number;
+  this_month: number;
+  total: number;
+  by_provider: Record<string, { calls: number; cost: number }>;
+}
+
+export interface APINarratives {
+  narratives: Array<{
+    id: string;
+    title: string;
+    summary: string;
+    impact: string;
+    affected_assets: string[];
+    confidence: number;
+    timestamp: string;
+  }>;
+}
+
+// ---- Dual Portfolio Types ----
+
+export interface APIDualPortfolio {
+  alpha: {
+    name: string;
+    allocations: Array<{ asset_id: string; name: string; weight: number; score: number }>;
+    expected_return: number;
+    risk_level: string;
+  };
+  omega: {
+    name: string;
+    allocations: Array<{ asset_id: string; name: string; weight: number; score: number }>;
+    expected_return: number;
+    risk_level: string;
+  };
+  scenarios?: APIScenarios;
+}
+
+export interface APIScenarios {
+  scenarios: Array<{
+    name: string;
+    probability: number;
+    description: string;
+    alpha_return: number;
+    omega_return: number;
+  }>;
+  generated_at: string;
+}
+
+// ---- Core-Satellite Types ----
+
+export interface APICoreSatellite {
+  core: Array<{ asset_id: string; name: string; weight: number; type: string; ticker: string }>;
+  satellite: Array<{ asset_id: string; name: string; weight: number; conviction: number; ticker: string }>;
+  core_pct: number;
+  satellite_pct: number;
+  total_value: number;
+  broker: string;
+}
+
+// ---- Price History Types ----
+
+export interface APIPriceHistory {
+  candles: Array<{
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  }>;
+  asset_id: string;
+  period: string;
+}
+
+// ---- Brief Types ----
+
+export interface APIBrief {
+  type: string;
+  content: {
+    headline: string;
+    summary: string;
+    key_points: string[];
+    market_outlook: string;
+    actionable_insights: string[];
+  };
+  generated_at: string;
+  model_used: string;
+}
+
+export interface APIBriefHistory {
+  briefs: Array<{
+    type: string;
+    date: string;
+    headline: string;
+    generated_at: string;
+  }>;
+  count: number;
 }
 
 export const api = new AetherAPI();

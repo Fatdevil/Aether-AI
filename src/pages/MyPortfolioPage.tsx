@@ -65,15 +65,37 @@ export default function MyPortfolioPage() {
   );
 }
 
+/* ── Local Types ── */
+interface SearchResult {
+  name: string;
+  ticker: string;
+  currency?: string;
+  price?: number;
+}
+
+interface PortfolioComparison {
+  ai_score: number;
+  user_score: number;
+  overlap_pct: number;
+  suggestions: string[];
+  analysis: string;
+}
+
+interface FrontierData {
+  frontier: Array<{ risk: number; return: number }>;
+  efficient: Array<{ risk: number; return: number }>;
+  user_position?: { risk: number; return: number };
+}
+
 /* ── My Holdings Panel ── */
 function MyHoldingsPanel() {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [comparing, setComparing] = useState(false);
-  const [comparison, setComparison] = useState<any>(null);
-  const [frontier, setFrontier] = useState<any>(null);
+  const [comparison, setComparison] = useState<PortfolioComparison | null>(null);
+  const [frontier, setFrontier] = useState<FrontierData | null>(null);
   const [parsing, setParsing] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
@@ -94,7 +116,7 @@ function MyHoldingsPanel() {
     return () => clearTimeout(timer);
   }, [searchQuery, doSearch]);
 
-  const addHolding = (result: any) => {
+  const addHolding = (result: SearchResult) => {
     setHoldings(prev => [...prev, {
       name: result.name, ticker: result.ticker, value: 0, weight_pct: 0,
       currency: result.currency, current_price: result.price,
@@ -107,7 +129,7 @@ function MyHoldingsPanel() {
     setHoldings(prev => [...prev, { name: '', ticker: null, value: 0, weight_pct: 0 }]);
   };
 
-  const updateHolding = (idx: number, field: string, value: any) => {
+  const updateHolding = (idx: number, field: string, value: string | number) => {
     setHoldings(prev => prev.map((h, i) => i === idx ? { ...h, [field]: value } : h));
   };
 
@@ -348,7 +370,7 @@ function MyHoldingsPanel() {
                   label={{ value: 'Avk (%/år)', angle: -90, position: 'insideLeft', fill: 'var(--text-tertiary)', fontSize: 11 }}
                   tick={{ fill: 'var(--text-tertiary)', fontSize: 10 }} stroke="rgba(255,255,255,0.1)"
                 />
-                <Tooltip content={({ active, payload }: any) => {
+                <Tooltip content={({ active, payload }: { active?: boolean; payload?: Array<{ payload: { risk: number; return: number } }> }) => {
                   if (!active || !payload?.length) return null;
                   const d = payload[0]?.payload;
                   return (
@@ -360,11 +382,11 @@ function MyHoldingsPanel() {
                   );
                 }} />
                 <Scatter name="Möjliga" data={frontier.frontier} fill="rgba(255,255,255,0.12)">
-                  {frontier.frontier.map((_: any, i: number) => <Cell key={i} fill="rgba(255,255,255,0.12)" r={2} />)}
+                  {frontier.frontier.map((_: { risk: number; return: number }, i: number) => <Cell key={i} fill="rgba(255,255,255,0.12)" r={2} />)}
                 </Scatter>
                 {frontier.efficient?.length > 0 && (
                   <Scatter name="Effektiv front" data={frontier.efficient} fill="var(--accent-cyan)" line={{ stroke: 'var(--accent-cyan)', strokeWidth: 2 }} lineType="fitting">
-                    {frontier.efficient.map((_: any, i: number) => <Cell key={i} fill="var(--accent-cyan)" r={3} />)}
+                    {frontier.efficient.map((_: { risk: number; return: number }, i: number) => <Cell key={i} fill="var(--accent-cyan)" r={3} />)}
                   </Scatter>
                 )}
                 {frontier.user_position && (
