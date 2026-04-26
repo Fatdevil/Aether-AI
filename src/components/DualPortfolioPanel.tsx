@@ -64,7 +64,7 @@ export default function DualPortfolioPanel() {
   useEffect(() => {
     api.getDualPortfolio()
       .then(setData)
-      .catch(() => {})
+      .catch((err) => console.warn('[DualPortfolio] fetch failed:', err))
       .finally(() => setLoading(false));
   }, []);
 
@@ -74,7 +74,9 @@ export default function DualPortfolioPanel() {
       await api.refreshScenarios();
       const fresh = await api.getDualPortfolio();
       setData(fresh);
-    } catch { /* silent */ }
+    } catch (err) {
+      console.warn('[DualPortfolio] refresh failed:', err);
+    }
     setRefreshing(false);
   };
 

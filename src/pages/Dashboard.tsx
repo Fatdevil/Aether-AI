@@ -316,9 +316,10 @@ function SignalBadge({ count, type }: { count: number; type: 'buy' | 'sell' | 'n
 }
 
 function ScoreBadge({ score }: { score: number }) {
-  const color = score > 2 ? 'var(--score-positive)' : score < -2 ? 'var(--score-negative)' : 'var(--score-neutral)';
-  const bgColor = score > 2 ? 'rgba(0,230,118,0.1)' : score < -2 ? 'rgba(255,23,68,0.1)' : 'rgba(255,234,0,0.08)';
-  const label = score > 3 ? 'KÖP' : score < -3 ? 'SÄLJ' : score > 0 ? 'Positiv' : score < 0 ? 'Negativ' : 'Neutral';
+  // L2 FIX: Aligned color + label thresholds (both use ≥3/≤-3, matching getRecommendation)
+  const color = score >= 3 ? 'var(--score-positive)' : score <= -3 ? 'var(--score-negative)' : 'var(--score-neutral)';
+  const bgColor = score >= 3 ? 'rgba(0,230,118,0.1)' : score <= -3 ? 'rgba(255,23,68,0.1)' : 'rgba(255,234,0,0.08)';
+  const label = score >= 6 ? 'STARKT KÖP' : score >= 3 ? 'KÖP' : score <= -6 ? 'STARKT SÄLJ' : score <= -3 ? 'SÄLJ' : score > 0 ? 'Positiv' : score < 0 ? 'Negativ' : 'Neutral';
 
   return (
     <div style={{ textAlign: 'right' }}>

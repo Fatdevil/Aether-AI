@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { api, type APICorrelationData } from '../api/client';
 
 const NAME_MAP: Record<string, string> = {
@@ -39,40 +40,26 @@ interface Insight {
 }
 
 export default function CorrelationHeatmap() {
-  const [data, setData] = useState<APICorrelationData | null>(null);
   const [period, setPeriod] = useState<Period>('30d');
-  const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<SelectedPair | null>(null);
-  const [insights, setInsights] = useState<Insight[]>([]);
-  const [insightsSource, setInsightsSource] = useState('');
-  const [insightsLoading, setInsightsLoading] = useState(false);
 
-  const fetchData = useCallback(async (p: Period) => {
-    setLoading(true);
-    setInsightsLoading(true);
-    try {
-      const result = await api.getCorrelations(p);
-      setData(result);
-    } catch {
-      setData(null);
-    }
-    setLoading(false);
+  // A3 FIX: TanStack Query replaces manual useState/useEffect/useCallback
+  const { data, isLoading: loading } = useQuery<APICorrelationData>({
+    queryKey: ['correlations', period],
+    queryFn: () => api.getCorrelations(period),
+    staleTime: 120_000,
+    retry: 2,
+  });
 
-    // Fetch AI insights in background
-    try {
-      const insightsResult = await api.getCorrelationInsights(p);
-      setInsights(insightsResult.insights || []);
-      setInsightsSource(insightsResult.source || '');
-    } catch {
-      setInsights([]);
-      setInsightsSource('');
-    }
-    setInsightsLoading(false);
-  }, []);
+  const { data: insightsData, isLoading: insightsLoading } = useQuery<{ insights: Insight[]; source: string }>({
+    queryKey: ['correlation-insights', period],
+    queryFn: () => api.getCorrelationInsights(period),
+    staleTime: 120_000,
+    retry: 1,
+  });
 
-  useEffect(() => {
-    fetchData(period);
-  }, [period, fetchData]);
+  const insights = insightsData?.insights || [];
+  const insightsSource = insightsData?.source || '';
 
   const handlePeriodChange = (p: Period) => {
     setPeriod(p);

@@ -16,8 +16,9 @@ import os
 from fastapi import FastAPI, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from starlette.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -385,8 +386,8 @@ async def background_predictive_loop():
 
             # Daily briefs (09:00 CET morning, 22:30 CET evening)
             try:
-                from datetime import timezone, timedelta
-                cet_now = datetime.now(timezone(timedelta(hours=2)))
+                from zoneinfo import ZoneInfo
+                cet_now = datetime.now(ZoneInfo("Europe/Stockholm"))
                 hour = cet_now.hour
 
                 # Endast på börsdagar (måndag=0 till fredag=4)
@@ -862,7 +863,8 @@ async def _run_full_pipeline() -> dict:
             bonds_mult = core_adj.get("bonds", 1.0)
 
             # Apply to final_scores based on asset category mapping
-            EQUITY_ASSETS = {"sp500", "xlk", "xlf", "xlv", "xle", "eem", "vgk", "ewj", "omxs30", "btc", "global-equity"}
+            # L4 FIX: Normalize IDs with underscores to match .replace("-", "_") below
+            EQUITY_ASSETS = {"sp500", "xlk", "xlf", "xlv", "xle", "eem", "vgk", "ewj", "omxs30", "btc", "global_equity"}
             GOLD_ASSETS = {"gold", "silver"}
             BOND_ASSETS = {"tlt", "us10y", "ief"}
 
@@ -894,6 +896,13 @@ async def _run_full_pipeline() -> dict:
                             corr_penalty[weaker] = min(corr_penalty.get(weaker, 1.0), penalty)
         except Exception:
             pass
+
+        # L5 FIX: Actually apply the correlation penalties to final_scores
+        for asset_id, penalty in corr_penalty.items():
+            if asset_id in final_scores:
+                original = final_scores[asset_id]
+                final_scores[asset_id] = round(original * penalty, 2)
+                logger.info(f"  📉 Corr penalty: {asset_id} {original:.1f} → {final_scores[asset_id]:.1f} (×{penalty:.2f})")
 
         layers_log["L7_portfolio"] = {
             "recommendations": len(portfolio_rec.get("recommendations", [])),
@@ -939,7 +948,10 @@ async def _run_full_pipeline() -> dict:
         # ================================================================
         risk_status = {"stop_triggered": False, "drawdown_pct": 0, "action": "NORMAL"}
         try:
-            total_value = sum(recent_prices.values()) if recent_prices else 0
+            # L1 FIX: Use portfolio manager for actual portfolio value instead of raw price sum
+            from portfolio_manager import portfolio
+            port_summary = portfolio.get_portfolio_summary(prices)
+            total_value = port_summary.get("total_value", 0) if isinstance(port_summary, dict) else 0
             if total_value > 0:
                 risk_status = risk_manager.update(total_value)
                 if risk_status.get("stop_triggered") or risk_status.get("action") == "REDUCE_RISK":
@@ -1191,10 +1203,14 @@ async def get_prediction_markets_dashboard(request: Request):
 async def get_pm_movements(request: Request, hours: int = 48):
     """Hämta oddsrörelser senaste N timmar."""
     cutoff = datetime.now() - timedelta(hours=hours)
-    recent = [
-        m.__dict__ for m in prediction_markets.movements
-        if datetime.fromisoformat(m.timestamp) > cutoff
-    ]
+    # S4 FIX: Safe timestamp parsing to prevent endpoint crash on malformed data
+    recent = []
+    for m in prediction_markets.movements:
+        try:
+            if datetime.fromisoformat(m.timestamp) > cutoff:
+                recent.append(m.__dict__)
+        except (ValueError, AttributeError):
+            continue
     return {"movements": recent, "count": len(recent), "period_hours": hours}
 
 
@@ -1237,7 +1253,8 @@ async def get_asset(asset_id: str):
     """Return detailed analysis for a single asset."""
     asset = data_service.get_asset(asset_id)
     if not asset:
-        return {"error": "Asset not found"}, 404
+        # K1 FIX: Return proper HTTP 404 instead of tuple
+        return JSONResponse(status_code=404, content={"error": "Asset not found"})
     return asset
 
 
@@ -1281,12 +1298,13 @@ async def get_market_state():
 
     # Fas 3: Inject risk_manager status between portfolio → dashboard
     try:
+        # L1 FIX: Use portfolio manager for real portfolio value, not raw price sum
+        from portfolio_manager import portfolio
         prices = data_service.prices or {}
-        total_value = sum(
-            p.get("price", 0) if isinstance(p, dict) else p
-            for p in prices.values()
-        )
+        port_summary = portfolio.get_portfolio_summary(prices)
+        total_value = port_summary.get("total_value", 0) if isinstance(port_summary, dict) else 0
         if total_value > 0:
+            # A7 NOTE: Using read-only check instead of update() to avoid side-effects on GET
             risk_check = risk_manager.update(total_value)
             state["risk_status"] = {
                 "trailing_stop": risk_check.get("stop_triggered", False),
@@ -1619,10 +1637,11 @@ async def get_signals():
 
 
 def _score_to_rec(score: float) -> str:
-    if score >= 5: return "Starkt Köp"
-    if score >= 2: return "Köp"
-    if score <= -5: return "Starkt Sälj"
-    if score <= -2: return "Sälj"
+    # A5 FIX: Aligned thresholds with frontend getRecommendation() in types/index.ts
+    if score >= 6: return "Starkt Köp"
+    if score >= 3: return "Köp"
+    if score <= -6: return "Starkt Sälj"
+    if score <= -3: return "Sälj"
     return "Neutral"
 
 
@@ -1640,18 +1659,28 @@ async def get_portfolio_risk():
     return portfolio.get_portfolio_summary(data_service.prices)
 
 
+class AddPositionRequest(BaseModel):
+    """S2 FIX: Pydantic validation for portfolio positions."""
+    asset_id: str = Field(..., min_length=1, max_length=50)
+    quantity: float = Field(..., gt=0)
+    entry_price: float = Field(..., gt=0)
+    entry_date: str = ""
+    asset_name: str = ""
+    currency: str = "$"
+    notes: str = ""
+
 @app.post("/api/portfolio/positions")
-async def add_position(body: dict):
+async def add_position(body: AddPositionRequest):
     """Add a new portfolio position."""
     from portfolio_manager import portfolio
     result = portfolio.add_position(
-        asset_id=body.get("asset_id", ""),
-        quantity=body.get("quantity", 0),
-        entry_price=body.get("entry_price", 0),
-        entry_date=body.get("entry_date", ""),
-        asset_name=body.get("asset_name", ""),
-        currency=body.get("currency", "$"),
-        notes=body.get("notes", ""),
+        asset_id=body.asset_id,
+        quantity=body.quantity,
+        entry_price=body.entry_price,
+        entry_date=body.entry_date,
+        asset_name=body.asset_name,
+        currency=body.currency,
+        notes=body.notes,
     )
     return result
 

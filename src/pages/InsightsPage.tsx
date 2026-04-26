@@ -1,8 +1,26 @@
 import { useState } from 'react';
 // import { motion, AnimatePresence } from 'framer-motion';
-import { Brain, Shield, History, Users, ChevronDown, ChevronUp } from 'lucide-react';
+import { Brain, Shield, History, Users, ChevronDown, ChevronUp, BarChart3, Bitcoin, Globe, Coins, Droplet, DollarSign, LineChart, Gem } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
+
+// L3 FIX: Map API icon strings/category to Lucide components
+const ICON_MAP: Record<string, typeof Brain> = {
+  'Bitcoin': Bitcoin, 'bitcoin': Bitcoin, 'btc': Bitcoin,
+  'Globe': Globe, 'globe': Globe, 'global-equity': Globe,
+  'Coins': Coins, 'coins': Coins, 'gold': Coins,
+  'Droplet': Droplet, 'droplet': Droplet, 'oil': Droplet,
+  'DollarSign': DollarSign, 'eurusd': DollarSign,
+  'LineChart': LineChart, 'us10y': LineChart,
+  'Gem': Gem, 'silver': Gem,
+  'BarChart': BarChart3, 'sp500': BarChart3,
+};
+function resolveIcon(asset: { icon?: string | ((...args: unknown[]) => unknown); id?: string }) {
+  if (typeof asset.icon === 'function') return asset.icon;
+  if (typeof asset.icon === 'string' && ICON_MAP[asset.icon]) return ICON_MAP[asset.icon];
+  if (typeof asset.id === 'string' && ICON_MAP[asset.id]) return ICON_MAP[asset.id];
+  return BarChart3;
+}
 
 type SubTab = 'supervisor' | 'agents' | 'performance' | 'adversarial';
 
@@ -120,7 +138,8 @@ function AssetInsightCard({ asset }: { asset: any }) {
   const [expanded, setExpanded] = useState(false);
   const score = asset.finalScore || 0;
   const scoreColor = score > 2 ? 'var(--score-positive)' : score < -2 ? 'var(--score-negative)' : 'var(--score-neutral)';
-  const AssetIcon = asset.icon;
+  // L3 FIX: Resolve icon safely instead of treating API string as React component
+  const AssetIcon = resolveIcon(asset);
 
   return (
     <div
@@ -330,7 +349,8 @@ function AdversarialTab() {
         AI utmanar sina egna starka rekommendationer för att hitta blinda fläckar.
       </p>
       {strong.length > 0 ? strong.map((asset: any) => {
-        const AssetIcon2 = asset.icon;
+        // L3 FIX: Resolve icon safely
+        const AssetIcon2 = resolveIcon(asset);
         const score = asset.finalScore || 0;
         return (
           <div key={asset.id} style={{

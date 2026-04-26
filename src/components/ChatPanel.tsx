@@ -92,29 +92,59 @@ export default function ChatPanel() {
     }
   }, [input, isLoading, messages]);
 
-  // Simple markdown rendering
-  const renderMarkdown = (text: string) => {
-    return text
-      .split('\n')
-      .map((line, i) => {
-        // Bold
-        let html = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-        // Italic
-        html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-        // Code
-        html = html.replace(/`(.*?)`/g, '<code style="background:rgba(0,255,200,0.1);padding:1px 4px;border-radius:3px;font-size:0.85em">$1</code>');
-        // List items
-        if (html.startsWith('- ')) {
-          html = `<span style="color:#00ffc8">•</span> ${html.slice(2)}`;
-        }
+  // K2 FIX: Safe markdown rendering — no dangerouslySetInnerHTML, no XSS risk
+  const renderInlineMarkdown = (text: string): React.ReactNode[] => {
+    // Split on bold, italic, and code patterns, returning React elements
+    const parts: React.ReactNode[] = [];
+    // Process bold **text**, italic *text*, and code `text`
+    const regex = /(\*\*.*?\*\*|\*.*?\*|`.*?`)/g;
+    let lastIndex = 0;
+    let match;
+    let partKey = 0;
 
-        return (
-          <span key={i}>
-            <span dangerouslySetInnerHTML={{ __html: html }} />
-            {i < text.split('\n').length - 1 && <br />}
-          </span>
+    while ((match = regex.exec(text)) !== null) {
+      // Add preceding plain text
+      if (match.index > lastIndex) {
+        parts.push(<span key={partKey++}>{text.slice(lastIndex, match.index)}</span>);
+      }
+
+      const token = match[0];
+      if (token.startsWith('**') && token.endsWith('**')) {
+        parts.push(<strong key={partKey++}>{token.slice(2, -2)}</strong>);
+      } else if (token.startsWith('*') && token.endsWith('*')) {
+        parts.push(<em key={partKey++}>{token.slice(1, -1)}</em>);
+      } else if (token.startsWith('`') && token.endsWith('`')) {
+        parts.push(
+          <code key={partKey++} style={{ background: 'rgba(0,255,200,0.1)', padding: '1px 4px', borderRadius: '3px', fontSize: '0.85em' }}>
+            {token.slice(1, -1)}
+          </code>
         );
-      });
+      }
+      lastIndex = match.index + token.length;
+    }
+
+    // Remaining plain text
+    if (lastIndex < text.length) {
+      parts.push(<span key={partKey++}>{text.slice(lastIndex)}</span>);
+    }
+
+    return parts.length > 0 ? parts : [<span key={0}>{text}</span>];
+  };
+
+  const renderMarkdown = (text: string) => {
+    const lines = text.split('\n');
+    return lines.map((line, i) => {
+      const isList = line.startsWith('- ');
+      const content = isList ? line.slice(2) : line;
+
+      return (
+        <span key={i}>
+          {isList && <span style={{ color: '#00ffc8' }}>• </span>}
+          {renderInlineMarkdown(content)}
+          {i < lines.length - 1 && <br />}
+        </span>
+      );
+    });
   };
 
   return (

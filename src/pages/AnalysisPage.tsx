@@ -366,7 +366,7 @@ function ErrorState() {
         Backend är inte tillgänglig just nu
       </p>
       <p style={{ color: 'var(--text-tertiary)', margin: '0.5rem 0 0', fontSize: '0.8rem' }}>
-        Starta backend på port 5000 för att se live-data
+        Starta backend på port 8000 för att se live-data
       </p>
     </div>
   );

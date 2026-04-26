@@ -199,9 +199,8 @@ class AetherAPI {
     return this.fetch('/api/onchain');
   }
 
-  async getRealPortfolio(): Promise<APIRealPortfolio> {
-    return this.fetch('/api/portfolio');
-  }
+  // A1 FIX: getRealPortfolio() removed — was duplicate of getPortfolio() with different type.
+  // Use getPortfolioRisk() for real positions or getPortfolio() for AI allocation.
 
   async addPosition(data: { asset_id: string; quantity: number; entry_price: number; asset_name?: string; notes?: string }): Promise<{ id: string }> {
     const response = await fetch(`${this.baseUrl}/api/portfolio/positions`, {

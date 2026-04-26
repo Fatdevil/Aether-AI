@@ -7,6 +7,7 @@ import { API_BASE } from '../api/client';
 
 const POLL_INTERVAL = 60_000; // Check every 60 seconds
 const MIN_IMPACT = 8; // Only notify on impact >= 8
+const MAX_SEEN_ALERTS = 500; // K3 FIX: Cap to prevent memory leak
 
 interface Alert {
   title: string;
@@ -68,6 +69,12 @@ export function useNotifications() {
             seenAlerts.current.add(key);
             showNotification(alert);
           }
+        }
+
+        // K3 FIX: Prune oldest entries when Set grows too large
+        if (seenAlerts.current.size > MAX_SEEN_ALERTS) {
+          const entries = Array.from(seenAlerts.current);
+          seenAlerts.current = new Set(entries.slice(entries.length - MAX_SEEN_ALERTS));
         }
       } catch {
         // Silently fail - notifications are best-effort
