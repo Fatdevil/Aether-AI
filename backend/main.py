@@ -1052,6 +1052,61 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ============================================================
+# HELPER FUNCTIONS (used by routers and endpoints)
+# ============================================================
+def _score_to_rec(score: float) -> str:
+    # A5 FIX: Aligned thresholds with frontend getRecommendation() in types/index.ts
+    if score >= 6: return "Starkt Köp"
+    if score >= 3: return "Köp"
+    if score <= -6: return "Starkt Sälj"
+    if score <= -3: return "Sälj"
+    return "Neutral"
+
+
+# ============================================================
+# MODULAR ROUTERS (Session 5 refactor)
+# Routes extracted from main.py into backend/routes/
+# ============================================================
+from routes import assets as assets_router
+from routes import analysis as analysis_router
+from routes import portfolio as portfolio_router
+from routes import system as system_router
+
+# Wire up shared state into routers
+assets_router.setup(
+    data_service=data_service,
+    risk_manager=risk_manager,
+    _last_pipeline_run=_last_pipeline_run,
+    _pipeline_run_count=_pipeline_run_count,
+    PIPELINE_INTERVAL_HOURS=PIPELINE_INTERVAL_HOURS,
+    _score_to_rec=_score_to_rec,
+)
+analysis_router.setup(
+    data_service=data_service,
+    limiter=limiter,
+    enrichment_loader=enrichment_loader,
+    prediction_markets=prediction_markets,
+)
+portfolio_router.setup(
+    data_service=data_service,
+    risk_manager=risk_manager,
+    event_tree_engine=event_tree_engine,
+    _last_pipeline_result_getter=lambda: _last_pipeline_result,
+)
+system_router.setup(
+    data_service=data_service,
+    get_system_info=get_system_info,
+)
+
+# Include all routers
+app.include_router(assets_router.router)
+app.include_router(analysis_router.router)
+app.include_router(portfolio_router.router)
+app.include_router(system_router.router)
+
+logger.info("📦 Loaded 4 modular routers (assets, analysis, portfolio, system)")
+
 # Models for the API
 class PortfolioItem(BaseModel):
     asset_id: str
